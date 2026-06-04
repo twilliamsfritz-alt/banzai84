@@ -1,0 +1,1 @@
+-- Initial schema is created by app.py for the local edition.

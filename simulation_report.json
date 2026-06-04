@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "conversation_id": 4,
+      "ok": true,
+      "reply": "Claro, te ayudo con eso.\n\nEncontré esto para vos:\n• Lavandina 5L = $4,200 (stock: 38)\n\nSi querés, te preparo el presupuesto ahora mismo y te confirmo el siguiente paso.",
+      "workspace": "owner@vantis.local"
+    },
+    {
+      "conversation_id": 5,
+      "ok": true,
+      "reply": "Sure. Let’s keep this simple.\n\nHere’s what I found:\n• Paper Product Bulk Pack = $37 (stock: 120)\n\nIf you want, I can put the quote together now and leave everything clear so you can decide without wasting time.",
+      "workspace": "owner@northbridge.local"
+    },
+    {
+      "conversation_id": 6,
+      "ok": true,
+      "reply": "Perfeito, cuidamos disso agora. Podemos revisar a entrega conforme a região e ao horário de confirmação. Se quiser, já deixo o pedido encaminhado também.",
+      "workspace": "owner@auroraops.local"
+    }
+  ]
+}

@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#06080F">
+  <title>Banzai</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+
+<!-- ═══════════════════════════════════ LOGIN ═══════════════════════════════ -->
+<section id="login-view" class="view hidden">
+  <div class="dot-grid"></div>
+  <div class="login-shell">
+
+    <div class="login-left">
+      <div class="banzai-wordmark">
+        <div class="banzai-mark">BZ</div>
+        <div class="banzai-name">Banzai</div>
+      </div>
+      <h1 class="login-headline">
+        The AI brain<br>behind your <span class="hl-accent">revenue.</span>
+      </h1>
+      <p class="login-desc">
+        Autonomous agents that negotiate deals, issue invoices and reconcile your books — in real time, with a full audit trail and fiscal compliance built in.
+      </p>
+      <div class="login-pills">
+        <div class="lp-pill"><div class="lp-dot"></div>Sales Agent</div>
+        <div class="lp-pill"><div class="lp-dot green"></div>Instant invoicing</div>
+        <div class="lp-pill"><div class="lp-dot cyan"></div>Auditor Agent</div>
+        <div class="lp-pill"><div class="lp-dot amber"></div>Value-based billing</div>
+        <div class="lp-pill"><div class="lp-dot"></div>WhatsApp native</div>
+        <div class="lp-pill"><div class="lp-dot green"></div>Multi-country tax</div>
+      </div>
+    </div>
+
+    <div class="login-card">
+      <div class="login-card-head">
+        <h2>Welcome back</h2>
+        <p>Sign in to your workspace</p>
+      </div>
+
+      <label>Email</label>
+      <input id="email" type="email" placeholder="owner@workspace.local" autocomplete="username">
+      <label>Password</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button id="login-btn" class="primary">Sign in →</button>
+      <div id="login-error"></div>
+      <div class="login-footer" id="version-badge">Banzai</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════ APP ═════════════════════════════════ -->
+<section id="dashboard-view" class="view hidden">
+  <div class="app-shell">
+
+    <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-mark">BZ</div>
+        <div class="sidebar-logo-text">Banzai</div>
+      </div>
+      <div class="ws-badge">
+        <div class="ws-name" id="ws-name-side">Workspace</div>
+        <div class="ws-region" id="ws-region-side">—</div>
+      </div>
+
+      <div class="sidebar-group">Command</div>
+      <button class="nav-item active" data-page="overview">
+        <span class="nav-icon">⬡</span> Overview
+      </button>
+      <button class="nav-item" data-page="agents">
+        <span class="nav-icon">◈</span> Agent Center
+        <span class="nav-badge" id="badge-agents"></span>
+      </button>
+      <button class="nav-item" data-page="deals">
+        <span class="nav-icon">◇</span> Deals
+        <span class="nav-badge" id="badge-deals"></span>
+      </button>
+      <button class="nav-item" data-page="invoices">
+        <span class="nav-icon">◻</span> Invoices
+      </button>
+
+      <div class="sidebar-group">Operations</div>
+      <button class="nav-item" data-page="sales">
+        <span class="nav-icon">◎</span> Sales Inbox
+      </button>
+      <button class="nav-item" data-page="finance">
+        <span class="nav-icon">◈</span> Finance
+      </button>
+      <button class="nav-item" data-page="tasks">
+        <span class="nav-icon">✦</span> Tasks
+      </button>
+
+      <div class="sidebar-group">Intelligence</div>
+      <button class="nav-item" data-page="pricing">
+        <span class="nav-icon">◉</span> Inventario
+      </button>
+      <button class="nav-item" data-page="knowledge">
+        <span class="nav-icon">◈</span> Knowledge
+      </button>
+      <button class="nav-item" data-page="settings">
+        <span class="nav-icon">◌</span> Settings
+      </button>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-user">
+          <div class="user-av" id="user-av">—</div>
+          <div class="user-info">
+            <div class="user-name" id="user-name-side">User</div>
+            <div class="user-role" id="user-role-side">Owner</div>
+          </div>
+          <button class="icon-btn" id="logout-btn" title="Sign out">↩</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ── Main content ──────────────────────────────────────────────────── -->
+    <main class="main">
+
+      <!-- Overview -->
+      <div class="page active" id="page-overview">
+        <div class="page-header">
+          <div>
+            <div class="page-title" id="overview-title">Overview</div>
+            <div class="page-sub" id="overview-sub">Real-time command center</div>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" id="btn-run-audit">Run audit</button>
+            <button class="ghost" id="btn-backup">↓ Backup</button>
+            <button class="primary" id="btn-run-sims">▷ Simulations</button>
+          </div>
+        </div>
+        <div class="kpi-row" id="kpi-row"></div>
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Agent activity</h3>
+              <span class="badge blue" id="agent-health-badge">—</span>
+            </div>
+            <div class="panel-body" style="max-height:300px;overflow-y:auto;" id="agent-events-overview"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Open deals pipeline</h3></div>
+            <div class="panel-body" style="max-height:300px;overflow-y:auto;" id="deals-pipeline-overview"></div>
+          </div>
+        </div>
+        <div class="g2" style="margin-top:14px;">
+          <div class="panel">
+            <div class="panel-head"><h3>Recent ledger</h3></div>
+            <div class="panel-body" id="invoices-overview"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Audit status</h3>
+              <button class="ghost" id="btn-audit-detail" style="font-size:11px;">Full report →</button>
+            </div>
+            <div class="panel-body" id="audit-overview"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Center -->
+      <div class="page" id="page-agents">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Agent Center</div>
+            <div class="page-sub">Configure · Monitor · Audit the autonomous pipeline</div>
+          </div>
+          <div class="header-actions">
+            <button class="primary" id="btn-audit-run">Run audit now</button>
+          </div>
+        </div>
+        <div class="g3" style="margin-bottom:16px;">
+          <div class="panel">
+            <div class="panel-head"><h3>Sales Agent</h3><span class="badge blue">Active</span></div>
+            <div class="panel-body">
+              <p style="margin-bottom:14px;font-size:12px;">Detects negotiation intent, proposes discounts within approved bands, auto-approves small discounts.</p>
+              <div class="cfg-row"><label>Max discount %</label><input id="margin-max-discount" type="number" value="15" min="0" max="50"></div>
+              <div class="cfg-row"><label>Min margin floor %</label><input id="margin-min-margin" type="number" value="25" min="0" max="80"></div>
+              <div class="cfg-row"><label>Auto-approve below %</label><input id="margin-auto-approve" type="number" value="5" min="0" max="20"></div>
+              <div class="form-actions" style="margin-top:8px;"><button class="secondary" id="btn-save-margins">Save rules</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Accounting Agent</h3><span class="badge green">Active</span></div>
+            <div class="panel-body">
+              <p style="margin-bottom:14px;font-size:12px;">On deal accepted: issues fiscal invoice, posts ledger entry as Paid, records 2% commission. One atomic transaction.</p>
+              <div class="cfg-row"><label>Country code</label><input id="tax-country" placeholder="AR"></div>
+              <div class="cfg-row"><label>Tax rate %</label><input id="tax-rate" type="number" value="21"></div>
+              <div class="cfg-row"><label>Tax authority</label><input id="tax-authority" placeholder="AFIP"></div>
+              <div class="cfg-row"><label>Company tax ID</label><input id="tax-company-id" placeholder="30-12345678-9"></div>
+              <div class="cfg-row"><label>Invoice prefix</label><input id="tax-prefix" placeholder="FC"></div>
+              <div class="form-actions" style="margin-top:8px;"><button class="secondary" id="btn-save-tax">Save fiscal config</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Auditor Agent</h3><span class="badge" style="background:rgba(167,139,250,.12);color:#A78BFA;">Active</span></div>
+            <div class="panel-body" id="audit-full-report">
+              <p>Click "Run audit now" to generate a compliance report.</p>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Live event log</h3>
+            <span class="badge gray" id="event-count">—</span>
+          </div>
+          <div class="panel-body" style="max-height:320px;overflow-y:auto;" id="agent-event-log"></div>
+        </div>
+      </div>
+
+      <!-- Deals -->
+      <div class="page" id="page-deals">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Deals</div>
+            <div class="page-sub">Negotiations managed by the Sales Agent</div>
+          </div>
+        </div>
+        <div class="g2">
+          <div>
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+              <span class="badge blue" id="deals-open-badge">0 open</span>
+              <span class="badge green" id="deals-closed-badge">0 closed</span>
+            </div>
+            <div id="deals-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Commission summary</h3></div>
+            <div class="panel-body" id="commission-summary"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Invoices -->
+      <div class="page" id="page-invoices">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Invoices</div>
+            <div class="page-sub">Fiscal records issued by the Accounting Agent</div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Invoice registry</h3></div>
+          <div class="panel-body">
+            <div class="invoice-row invoice-head">
+              <span>Number</span><span>Customer</span><span>Total</span><span>Tax</span><span>Status</span>
+            </div>
+            <div id="invoice-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sales Inbox -->
+      <div class="page" id="page-sales">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Sales Inbox</div>
+            <div class="page-sub">Conversations · Agent pipeline · Quote builder</div>
+          </div>
+        </div>
+        <div class="g-sales stretch">
+          <div class="panel stretch">
+            <div class="panel-head"><h3>Conversations</h3></div>
+            <div class="panel-body" style="overflow-y:auto;flex:1;" id="conv-list"></div>
+          </div>
+          <div class="panel stretch" style="display:flex;flex-direction:column;">
+            <div class="panel-head">
+              <h3 id="chat-title">Select a conversation</h3>
+              <span class="badge gray" id="chat-channel">—</span>
+            </div>
+            <div class="chat-window">
+              <div class="chat-msgs" id="chat-msgs"></div>
+              <div class="chat-composer">
+                <textarea id="reply-box" placeholder="Write a reply or use AI suggest…"></textarea>
+                <div class="compose-actions">
+                  <button class="ghost" id="suggest-reply">✦ AI suggest</button>
+                  <button class="primary" id="send-reply">Send ↑</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panel" style="overflow-y:auto;">
+            <div class="panel-head"><h3>Agent inbound</h3></div>
+            <div class="panel-body">
+              <label>Customer name</label>
+              <input id="webchat-customer" placeholder="New lead name">
+              <label>Message</label>
+              <textarea id="webchat-message" placeholder="Simulate an inbound message…"></textarea>
+              <div style="display:flex;gap:6px;margin-top:10px;">
+                <button class="primary" style="flex:1;" id="send-agent">◈ Agent pipeline</button>
+                <button class="ghost" id="send-webchat">Send</button>
+              </div>
+              <div class="agent-reply-preview" id="agent-reply-preview"></div>
+              <div class="divider"></div>
+              <h4 style="margin-bottom:10px;">Quote builder</h4>
+              <div id="product-picker" style="display:flex;flex-direction:column;gap:5px;"></div>
+              <div id="quote-items" style="margin-top:8px;"></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+                <span style="font-size:12px;color:var(--text3);">Total</span>
+                <strong id="quote-total" style="font-size:15px;">$0</strong>
+              </div>
+              <button class="secondary" style="width:100%;margin-top:10px;justify-content:center;" id="create-quote">Create quote</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Finance & Reports -->
+      <div class="page" id="page-finance">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Finanzas & Reportes</div>
+            <div class="page-sub">P&L · Libro contable · Gráficos · Exportar Excel</div>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" id="btn-export-csv">↓ CSV</button>
+            <button class="primary" id="btn-export-excel">↓ Excel completo</button>
+          </div>
+        </div>
+
+        <!-- P&L KPIs -->
+        <div id="finance-kpis" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;"></div>
+
+        <!-- Charts row -->
+        <div class="g2" style="margin-bottom:16px;">
+          <div class="panel">
+            <div class="panel-head"><h3>Tendencia mensual (Ingresos vs Gastos)</h3></div>
+            <div class="panel-body" style="position:relative;height:220px;">
+              <canvas id="chart-monthly" aria-label="Gráfico de tendencia mensual de ingresos y gastos"></canvas>
+            </div>
+          </div>
+          <div class="g2" style="gap:14px;">
+            <div class="panel">
+              <div class="panel-head"><h3>Ingresos por categoría</h3></div>
+              <div class="panel-body" style="position:relative;height:200px;">
+                <canvas id="chart-income-cat" aria-label="Ingresos por categoría"></canvas>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>Gastos por categoría</h3></div>
+              <div class="panel-body" style="position:relative;height:200px;">
+                <canvas id="chart-expense-cat" aria-label="Gastos por categoría"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Second charts row -->
+        <div class="g2" style="margin-bottom:16px;">
+          <div class="panel">
+            <div class="panel-head"><h3>Pipeline de deals</h3></div>
+            <div class="panel-body" style="position:relative;height:200px;">
+              <canvas id="chart-deals" aria-label="Pipeline de deals por estado"></canvas>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Inventario — top productos por valor</h3></div>
+            <div class="panel-body" style="position:relative;height:200px;">
+              <canvas id="chart-inventory" aria-label="Valor de inventario por producto"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledger + form -->
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Libro contable explicado</h3>
+              <div style="display:flex;gap:6px;">
+                <button class="ghost" id="btn-filter-income" onclick="filterLedger('Income')" style="font-size:11px;">Solo ingresos</button>
+                <button class="ghost" id="btn-filter-expense" onclick="filterLedger('Expense')" style="font-size:11px;">Solo gastos</button>
+                <button class="ghost" onclick="filterLedger('')" style="font-size:11px;">Todo</button>
+              </div>
+            </div>
+            <div class="panel-body" style="overflow-y:auto;max-height:480px;" id="ledger-explained-body"></div>
+          </div>
+          <div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Registrar movimiento</h3></div>
+              <div class="panel-body">
+                <div class="form-row">
+                  <div><label>Tipo</label>
+                    <select id="ledger-type">
+                      <option value="Income">Ingreso</option>
+                      <option value="Expense" selected>Gasto</option>
+                    </select>
+                  </div>
+                  <div><label>Monto</label><input id="ledger-amount" type="number" value="0" min="0"></div>
+                </div>
+                <label>Concepto</label><input id="ledger-concept" placeholder="Ej: Pago proveedor Ramírez">
+                <div class="form-row">
+                  <div><label>Categoría</label>
+                    <select id="ledger-category">
+                      <option>Ventas</option><option>Operaciones</option><option>Marketing</option>
+                      <option>Sueldos</option><option>Alquiler</option><option>Impuestos</option>
+                      <option>Logística</option><option>Tecnología</option><option>Otros</option>
+                    </select>
+                  </div>
+                  <div><label>Estado</label>
+                    <select id="ledger-state">
+                      <option value="Paid">Pagado</option>
+                      <option value="Pending">Pendiente</option>
+                    </select>
+                  </div>
+                </div>
+                <label>Fecha de vencimiento</label>
+                <input id="ledger-due" type="date">
+                <div class="form-actions"><button class="primary" id="save-ledger">Registrar</button></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>Alertas de inventario</h3></div>
+              <div class="panel-body" id="inventory-alerts"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tasks -->
+      <div class="page" id="page-tasks">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Tasks</div>
+            <div class="page-sub">Ownership · Priority · Status</div>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head"><h3>All tasks</h3></div>
+            <div class="panel-body" id="task-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Create task</h3></div>
+            <div class="panel-body">
+              <label>Title</label><input id="task-title">
+              <div class="form-row">
+                <div><label>Area</label><input id="task-area" value="Admin"></div>
+                <div><label>Owner</label><input id="task-owner" value="Owner"></div>
+              </div>
+              <div class="form-row">
+                <div><label>Priority</label><input id="task-priority" value="Medium"></div>
+                <div><label>Impact 1-10</label><input id="task-impact" type="number" value="5"></div>
+              </div>
+              <div class="form-actions"><button class="primary" id="save-task">Create task</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inventory / Products -->
+      <div class="page" id="page-pricing">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Inventario</div>
+            <div class="page-sub">Productos · Stock · Precios · Historial de movimientos</div>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" id="btn-bulk-import">⬆ Importar CSV</button>
+            <button class="primary" id="btn-new-product">+ Nuevo producto</button>
+          </div>
+        </div>
+
+        <!-- Stats bar -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;" id="inv-stats"></div>
+
+        <!-- Search + filter -->
+        <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;">
+          <input id="inv-search" placeholder="Buscar por nombre, SKU o categoría…" style="flex:1;max-width:340px;">
+          <select id="inv-filter-cat" style="width:160px;">
+            <option value="">Todas las categorías</option>
+          </select>
+          <select id="inv-filter-stock" style="width:160px;">
+            <option value="">Todo el stock</option>
+            <option value="low">Stock bajo</option>
+            <option value="ok">Stock OK</option>
+            <option value="zero">Sin stock</option>
+          </select>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 380px;gap:16px;">
+          <!-- Product table -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3 id="inv-count">Productos</h3>
+              <span class="badge gray" id="inv-total-badge">—</span>
+            </div>
+            <div class="panel-body" style="padding:0;">
+              <table class="data-table" id="inv-table">
+                <thead>
+                  <tr>
+                    <th style="padding-left:18px;">Producto</th>
+                    <th>SKU</th>
+                    <th>Categoría</th>
+                    <th>Costo</th>
+                    <th>Precio</th>
+                    <th>Margen</th>
+                    <th>Stock</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="inv-body"></tbody>
+              </table>
+              <div id="inv-empty" class="empty" style="display:none;">
+                <div class="empty-icon">📦</div>
+                <div class="empty-text">No hay productos todavía</div>
+                <button class="primary" style="margin-top:10px;" onclick="openNewProduct()">+ Agregar el primero</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right panel: form + detail -->
+          <div>
+            <!-- Product form -->
+            <div class="panel" id="product-form-panel" style="margin-bottom:14px;">
+              <div class="panel-head">
+                <h3 id="form-panel-title">Nuevo producto</h3>
+                <button class="ghost" id="btn-cancel-form" style="font-size:11px;display:none;" onclick="cancelForm()">Cancelar</button>
+              </div>
+              <div class="panel-body">
+                <input type="hidden" id="editing-product-id">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label>Nombre *</label><input id="p-name" placeholder="Ej: Lavandina 5L"></div>
+                  <div><label>SKU *</label><input id="p-sku" placeholder="Ej: LAV-5L"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label>Categoría</label><input id="p-category" placeholder="Ej: Limpieza"></div>
+                  <div><label>Unidad</label><input id="p-unit" placeholder="Ej: litro, kg, unidad"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label>Costo</label><input id="p-cost" type="number" min="0" step="0.01" placeholder="0"></div>
+                  <div><label>Precio de venta</label><input id="p-price" type="number" min="0" step="0.01" placeholder="0"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label>Stock inicial</label><input id="p-stock" type="number" min="0" placeholder="0"></div>
+                  <div><label>Stock mínimo</label><input id="p-stock-min" type="number" min="0" placeholder="0"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label>Precio competidor</label><input id="p-competitor" type="number" min="0" step="0.01" placeholder="0"></div>
+                  <div><label>Código de barras</label><input id="p-barcode" placeholder="Opcional"></div>
+                </div>
+                <label>Notas</label>
+                <textarea id="p-notes" placeholder="Notas internas…" style="min-height:56px;"></textarea>
+                <div id="p-margin-preview" style="margin-top:10px;padding:8px 12px;background:var(--surface3);border-radius:var(--r-sm);font-size:12px;color:var(--text2);display:none;"></div>
+                <div class="form-actions">
+                  <button class="primary" id="btn-save-product" onclick="saveProduct()">Guardar producto</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stock adjustment -->
+            <div class="panel" id="stock-adj-panel" style="margin-bottom:14px;display:none;">
+              <div class="panel-head"><h3 id="stock-adj-title">Ajustar stock</h3></div>
+              <div class="panel-body">
+                <div style="display:flex;gap:8px;margin-bottom:10px;">
+                  <button class="secondary" onclick="setDelta(1)" id="delta-custom-btn" style="flex:1;justify-content:center;">+1</button>
+                  <button class="secondary" onclick="setDelta(10)" style="flex:1;justify-content:center;">+10</button>
+                  <button class="secondary" onclick="setDelta(50)" style="flex:1;justify-content:center;">+50</button>
+                  <button class="secondary" onclick="setDelta(-1)" style="flex:1;justify-content:center;">-1</button>
+                  <button class="secondary" onclick="setDelta(-10)" style="flex:1;justify-content:center;">-10</button>
+                </div>
+                <label>Cantidad (positivo = entrada, negativo = salida)</label>
+                <input id="stock-delta" type="number" placeholder="Ej: 20 o -5" value="0">
+                <label>Motivo</label>
+                <input id="stock-note" placeholder="Ej: Compra proveedor, venta manual, merma…">
+                <div class="form-actions">
+                  <button class="ghost" onclick="closeStockAdj()">Cancelar</button>
+                  <button class="primary" onclick="applyStockAdj()">Aplicar</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stock history -->
+            <div class="panel" id="stock-history-panel" style="display:none;">
+              <div class="panel-head"><h3>Historial de movimientos</h3></div>
+              <div class="panel-body" style="max-height:280px;overflow-y:auto;" id="stock-history-body"></div>
+            </div>
+
+            <!-- Pricing engine -->
+            <div class="panel" id="pricing-engine-panel">
+              <div class="panel-head"><h3>Motor de precios</h3></div>
+              <div class="panel-body">
+                <p style="margin-bottom:10px;font-size:12px;">Seleccioná un producto de la tabla y calculá el precio óptimo según tu margen objetivo.</p>
+                <label>Margen objetivo %</label>
+                <input id="target-margin" type="number" value="42">
+                <button class="secondary" style="width:100%;margin-top:10px;justify-content:center;" id="run-pricing">Calcular precio</button>
+                <div id="pricing-result" style="margin-top:14px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bulk import modal -->
+        <div id="bulk-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-xl);padding:32px;width:520px;max-width:95vw;">
+            <h3 style="margin-bottom:8px;">Importar productos en masa</h3>
+            <p style="margin-bottom:16px;font-size:12px;">Pegá un CSV con columnas: <code style="background:var(--surface3);padding:2px 6px;border-radius:4px;font-size:11px;">sku,name,category,cost,price,stock</code></p>
+            <textarea id="bulk-csv" style="min-height:160px;font-family:monospace;font-size:12px;" placeholder="sku,name,category,cost,price,stock&#10;LAV-5,Lavandina 5L,Limpieza,2600,4200,30&#10;PH-12,Papel x12,Papel,5900,9300,20"></textarea>
+            <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+              <button class="ghost" onclick="closeBulkModal()">Cancelar</button>
+              <button class="primary" onclick="processBulkCSV()">Importar</button>
+            </div>
+            <div id="bulk-result" style="margin-top:10px;font-size:12px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Knowledge -->
+      <div class="page" id="page-knowledge">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Knowledge</div>
+            <div class="page-sub">Expert library · Articles · Templates</div>
+          </div>
+        </div>
+        <div class="g2">
+          <div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Knowledge articles</h3></div>
+              <div class="panel-body" id="knowledge-list"></div>
+            </div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Expert source library</h3></div>
+              <div class="panel-body" id="source-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>Templates</h3></div>
+              <div class="panel-body" id="template-list"></div>
+            </div>
+          </div>
+          <div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Add article</h3></div>
+              <div class="panel-body">
+                <label>Title</label><input id="knowledge-title">
+                <label>Content</label><textarea id="knowledge-content"></textarea>
+                <div class="form-actions"><button class="primary" id="save-knowledge">Save</button></div>
+              </div>
+            </div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Add source</h3></div>
+              <div class="panel-body">
+                <label>Title</label><input id="source-title">
+                <div class="form-row">
+                  <div><label>Domain</label><input id="source-domain" value="sales"></div>
+                  <div><label>Type</label><input id="source-type" value="manual"></div>
+                </div>
+                <label>Content</label><textarea id="source-content"></textarea>
+                <div class="form-actions"><button class="primary" id="save-source">Save source</button></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>Upload file</h3></div>
+              <div class="panel-body">
+                <label>Domain</label><input id="upload-domain" value="general">
+                <input id="source-file" type="file" style="margin-top:10px;">
+                <div class="form-actions"><button class="secondary" id="upload-source">Upload to library</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline Kanban -->
+      <div class="page" id="page-pipeline">
+        <div class="page-header">
+          <div><div class="page-title">Pipeline de ventas</div><div class="page-sub">Kanban visual · Arrastrá y soltá · Valor por etapa</div></div>
+          <div class="header-actions">
+            <button class="primary" id="btn-new-card" onclick="openNewCard()">+ Nueva oportunidad</button>
+          </div>
+        </div>
+        <div id="pipeline-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;"></div>
+        <div id="pipeline-board" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;"></div>
+        <div id="card-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-xl);padding:28px;width:480px;max-width:95vw;">
+            <h3 id="card-modal-title" style="margin-bottom:16px;">Nueva oportunidad</h3>
+            <input type="hidden" id="card-id">
+            <label>Cliente *</label><input id="card-customer">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Valor estimado</label><input id="card-value" type="number" placeholder="0"></div>
+              <div><label>Probabilidad %</label><input id="card-prob" type="number" value="50" min="0" max="100"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Etapa</label><select id="card-stage"></select></div>
+              <div><label>Cierre esperado</label><input id="card-close" type="date"></div>
+            </div>
+            <label>Notas</label><textarea id="card-notes" style="min-height:60px;"></textarea>
+            <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+              <button class="ghost" onclick="closePipelineModal()">Cancelar</button>
+              <button class="danger-btn" id="btn-delete-card" onclick="deleteCardModal()" style="display:none;">Eliminar</button>
+              <button class="primary" onclick="saveCard()">Guardar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contacts -->
+      <div class="page" id="page-contacts">
+        <div class="page-header">
+          <div><div class="page-title">Contactos</div><div class="page-sub">Perfil 360° · Historial completo · Revenue por cliente</div></div>
+          <div class="header-actions">
+            <button class="secondary" id="btn-sync-contacts" onclick="syncContacts()">↺ Sincronizar</button>
+            <button class="primary" onclick="openNewContact()">+ Nuevo contacto</button>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head"><h3>Todos los contactos</h3><span class="badge gray" id="contacts-count">—</span></div>
+            <div class="panel-body" style="max-height:600px;overflow-y:auto;" id="contacts-list"></div>
+          </div>
+          <div class="panel" id="contact-detail-panel">
+            <div class="panel-head"><h3>Perfil 360°</h3></div>
+            <div class="panel-body" id="contact-detail-body">
+              <div class="empty"><div class="empty-icon">◎</div><div class="empty-text">Seleccioná un contacto</div></div>
+            </div>
+          </div>
+        </div>
+        <div id="new-contact-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-xl);padding:28px;width:440px;max-width:95vw;">
+            <h3 style="margin-bottom:16px;">Nuevo contacto</h3>
+            <label>Nombre *</label><input id="c-name" placeholder="Nombre completo">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Email</label><input id="c-email" type="email"></div>
+              <div><label>Teléfono</label><input id="c-phone" placeholder="+54911..."></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Empresa</label><input id="c-company"></div>
+              <div><label>Cargo</label><input id="c-role"></div>
+            </div>
+            <label>Notas</label><textarea id="c-notes" style="min-height:56px;"></textarea>
+            <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+              <button class="ghost" onclick="closeContactModal()">Cancelar</button>
+              <button class="primary" onclick="saveNewContact()">Guardar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Goals -->
+      <div class="page" id="page-goals">
+        <div class="page-header">
+          <div><div class="page-title">Objetivos</div><div class="page-sub">KPIs con progreso en tiempo real · Periodos personalizados</div></div>
+          <div class="header-actions">
+            <button class="primary" onclick="openNewGoal()">+ Nuevo objetivo</button>
+          </div>
+        </div>
+        <div id="goals-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;"></div>
+        <div id="goal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-xl);padding:28px;width:420px;max-width:95vw;">
+            <h3 style="margin-bottom:16px;">Nuevo objetivo</h3>
+            <label>Nombre del objetivo</label><input id="g-name" placeholder="Ej: Revenue mensual Q2">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Métrica</label>
+                <select id="g-metric">
+                  <option value="revenue">Ingresos cobrados</option>
+                  <option value="deals_closed">Deals cerrados</option>
+                  <option value="deals_value">Valor de deals</option>
+                  <option value="nps">NPS promedio</option>
+                  <option value="surveys">Encuestas respondidas</option>
+                </select>
+              </div>
+              <div><label>Meta</label><input id="g-target" type="number" placeholder="0"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div><label>Desde</label><input id="g-start" type="date"></div>
+              <div><label>Hasta</label><input id="g-end" type="date"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+              <button class="ghost" onclick="closeGoalModal()">Cancelar</button>
+              <button class="primary" onclick="saveGoal()">Crear objetivo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Automations -->
+      <div class="page" id="page-automations">
+        <div class="page-header">
+          <div><div class="page-title">Automatizaciones</div><div class="page-sub">Si esto → entonces aquello · Sin código</div></div>
+          <div class="header-actions">
+            <button class="primary" onclick="openNewAutomation()">+ Nueva automatización</button>
+          </div>
+        </div>
+        <div class="g2">
+          <div id="automations-list"></div>
+          <div class="panel" id="auto-form-panel">
+            <div class="panel-head"><h3>Nueva automatización</h3></div>
+            <div class="panel-body">
+              <label>Nombre</label><input id="auto-name" placeholder="Ej: Deal cerrado → crear tarea">
+              <label>Cuando (trigger)</label>
+              <select id="auto-trigger"></select>
+              <label>Entonces (acción)</label>
+              <select id="auto-action"></select>
+              <label>Configuración de la acción (JSON)</label>
+              <textarea id="auto-config" style="font-family:monospace;font-size:12px;" placeholder='{"title":"Seguimiento post-venta"}'></textarea>
+              <div class="form-actions"><button class="primary" id="btn-save-auto" onclick="saveAutomation()">Crear automatización</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Advisor -->
+      <div class="page" id="page-advisor">
+        <div class="page-header">
+          <div><div class="page-title">Asesor IA</div><div class="page-sub">Insights accionables generados de tus datos en tiempo real</div></div>
+          <div class="header-actions">
+            <button class="primary" id="btn-get-insights" onclick="loadAdvisorInsights()">✦ Generar insights</button>
+          </div>
+        </div>
+        <div id="advisor-loading" style="display:none;padding:40px;text-align:center;color:var(--text3);">Analizando tu negocio…</div>
+        <div id="advisor-content">
+          <div class="empty"><div class="empty-icon">✦</div><div class="empty-text">Apretá "Generar insights" para que la IA analice todo tu negocio y te dé 5 recomendaciones accionables para esta semana.</div></div>
+        </div>
+      </div>
+
+      <!-- Broadcast -->
+      <div class="page" id="page-broadcast">
+        <div class="page-header">
+          <div><div class="page-title">Broadcast</div><div class="page-sub">Mensajes masivos personalizados · WhatsApp · Notificaciones</div></div>
+        </div>
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head"><h3>Enviar broadcast</h3></div>
+            <div class="panel-body">
+              <label>Mensaje (usá {{name}} o {{nombre}} para personalizar)</label>
+              <textarea id="bc-message" style="min-height:100px;" placeholder="Hola {{name}}, te escribimos desde Banzai para…"></textarea>
+              <div id="bc-char-count" style="font-size:11px;color:var(--text3);margin-top:4px;">0 caracteres</div>
+              <label>Canal</label>
+              <select id="bc-channel">
+                <option value="internal">Notificación interna (sin WhatsApp)</option>
+                <option value="whatsapp">WhatsApp (requiere integración activa)</option>
+              </select>
+              <label>Destinatarios (uno por línea: nombre|telefono)</label>
+              <textarea id="bc-recipients" style="min-height:80px;font-family:monospace;font-size:12px;" placeholder="Carlos García|5491112345678&#10;Laura Martínez|5491198765432"></textarea>
+              <div id="bc-result" style="display:none;margin-top:10px;padding:10px;border-radius:var(--r-sm);font-size:12px;"></div>
+              <div class="form-actions"><button class="primary" id="btn-broadcast" onclick="sendBroadcast()">📡 Enviar broadcast</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Historial de broadcasts</h3></div>
+            <div class="panel-body" style="max-height:400px;overflow-y:auto;" id="broadcast-history"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="page" id="page-settings">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Settings</div>
+            <div class="page-sub">Workspace · Integrations · Response profile</div>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" id="btn-go-live">↓ Go-live pack</button>
+          </div>
+        </div>
+        <div class="g2">
+          <div>
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Integrations</h3></div>
+              <div class="panel-body" id="integrations-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>Response profile</h3></div>
+              <div class="panel-body">
+                <label>Style</label><input id="profile-style">
+                <label>Personality notes</label><textarea id="profile-notes"></textarea>
+                <label>Forbidden tone</label><textarea id="profile-forbidden"></textarea>
+                <div class="form-actions"><button class="primary" id="save-profile">Save profile</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>System</h3></div>
+            <div class="panel-body" id="system-status"></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</section>
+</div>
+
+<div id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

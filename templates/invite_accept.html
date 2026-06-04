@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Activar cuenta — Banzai</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    :root{--bg:#06080F;--surface:#0C0F1A;--surface3:#161B2E;--border2:rgba(255,255,255,.12);--text:#F0F2FA;--text2:#9AA3C2;--text3:#4E5B7A;--brand:#6366F1;--brand-dim:rgba(99,102,241,.12);--brand-glow:rgba(99,102,241,.25);--green:#10B981;--red:#EF4444;--r:10px;--r-xl:22px;}
+    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px;-webkit-font-smoothing:antialiased;}
+    body::before{content:'';position:fixed;top:-20%;left:-10%;width:60vw;height:60vw;border-radius:50%;background:radial-gradient(circle,rgba(99,102,241,.07) 0%,transparent 65%);pointer-events:none;}
+    .dot-grid{position:fixed;inset:0;background-image:radial-gradient(rgba(255,255,255,.025) 1px,transparent 1px);background-size:28px 28px;pointer-events:none;}
+    .shell{max-width:420px;width:100%;position:relative;z-index:1;}
+    .wordmark{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:28px;}
+    .wm-mark{width:38px;height:38px;background:var(--brand);border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;color:#fff;box-shadow:0 0 18px var(--brand-glow);}
+    .wm-name{font-size:20px;font-weight:800;letter-spacing:-.03em;}
+    .card{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-xl);padding:36px;box-shadow:0 32px 80px rgba(0,0,0,.5);}
+    h2{font-size:20px;font-weight:700;margin-bottom:6px;}
+    .sub{font-size:13px;color:var(--text3);margin-bottom:24px;line-height:1.6;}
+    label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:5px;margin-top:16px;}
+    input{width:100%;background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font:inherit;font-size:14px;padding:11px 14px;outline:none;transition:border-color .15s,box-shadow .15s;}
+    input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-dim);}
+    .strength{height:3px;border-radius:2px;background:var(--surface3);margin-top:6px;overflow:hidden;}
+    .strength-fill{height:100%;border-radius:2px;transition:width .3s,background .3s;width:0;}
+    .hint{font-size:11px;color:var(--text3);margin-top:5px;}
+    .btn{width:100%;background:var(--brand);color:#fff;border:none;border-radius:var(--r);padding:13px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;margin-top:20px;transition:all .15s;}
+    .btn:hover{background:#4F46E5;box-shadow:0 0 20px var(--brand-glow);}
+    .btn:disabled{opacity:.4;pointer-events:none;}
+    .err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px;}
+    .success-box{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25);border-radius:var(--r);padding:16px;text-align:center;display:none;}
+    .success-box h3{color:var(--green);margin-bottom:6px;}
+    .success-box p{font-size:13px;color:var(--text2);}
+    .info-box{background:var(--brand-dim);border:1px solid rgba(99,102,241,.2);border-radius:var(--r);padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--text2);}
+  </style>
+</head>
+<body>
+<div class="dot-grid"></div>
+<div class="shell">
+  <div class="wordmark">
+    <div class="wm-mark">BZ</div>
+    <div class="wm-name">Banzai</div>
+  </div>
+  <div class="card">
+    <h2>Activar cuenta</h2>
+    <p class="sub">Hola <strong>{{ name }}</strong>, fuiste invitado a Banzai. Elegí tu contraseña para activar el acceso.</p>
+    <div class="info-box">🔐 Tu acceso está configurado con permisos específicos definidos por el administrador del workspace.</div>
+    <div id="form-section">
+      <label>Contraseña</label>
+      <input id="pw1" type="password" placeholder="Mínimo 6 caracteres" oninput="checkStrength()">
+      <div class="strength"><div class="strength-fill" id="sf"></div></div>
+      <label>Confirmar contraseña</label>
+      <input id="pw2" type="password" placeholder="Repetí la contraseña">
+      <button class="btn" id="btn-activate" onclick="activate()">Activar mi cuenta →</button>
+      <div class="err" id="err"></div>
+    </div>
+    <div class="success-box" id="success-box">
+      <h3>✓ Cuenta activada</h3>
+      <p>Tu cuenta está lista. Ya podés iniciar sesión en Banzai.</p>
+      <button class="btn" style="margin-top:12px;" onclick="window.location.href='/'">Ir al login →</button>
+    </div>
+  </div>
+</div>
+<script>
+const TOKEN = '{{ token }}';
+function checkStrength() {
+  const v = document.getElementById('pw1').value;
+  let s=0; if(v.length>=6)s++; if(v.length>=10)s++; if(/[A-Z]/.test(v))s++; if(/[0-9]/.test(v))s++;
+  const pct=[0,25,50,75,100][s]||0;
+  const col=['','#EF4444','#F59E0B','#F59E0B','#10B981'][s]||'';
+  document.getElementById('sf').style.width=pct+'%';
+  document.getElementById('sf').style.background=col;
+}
+async function activate() {
+  const p1=document.getElementById('pw1').value, p2=document.getElementById('pw2').value;
+  document.getElementById('err').textContent='';
+  if(p1.length<6){document.getElementById('err').textContent='La contraseña debe tener al menos 6 caracteres';return;}
+  if(p1!==p2){document.getElementById('err').textContent='Las contraseñas no coinciden';return;}
+  document.getElementById('btn-activate').disabled=true;
+  document.getElementById('btn-activate').textContent='Activando…';
+  const r=await fetch('/api/invite/accept',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,password:p1})});
+  const d=await r.json();
+  if(d.ok){
+    document.getElementById('form-section').style.display='none';
+    document.getElementById('success-box').style.display='block';
+  } else {
+    document.getElementById('err').textContent=d.error||'Error';
+    document.getElementById('btn-activate').disabled=false;
+    document.getElementById('btn-activate').textContent='Activar mi cuenta →';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "Banzai",
+  "short_name": "Banzai",
+  "description": "Independent business operating system for sales, admin, finance and pricing workflows.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

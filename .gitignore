@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Database (never commit)
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# pytest
+.pytest_cache/
+
+# Backups
+*.zip
+!go_live_pack/
+
+# OS
+.DS_Store
+Thumbs.db
