@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Banzai Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    :root{
+      --bg:#06080F;--surface:#0C0F1A;--surface2:#111520;--surface3:#161B2E;
+      --border:rgba(255,255,255,.07);--border2:rgba(255,255,255,.12);
+      --text:#F0F2FA;--text2:#9AA3C2;--text3:#4E5B7A;
+      --brand:#6366F1;--brand-dim:rgba(99,102,241,.12);--brand-dark:#4F46E5;
+      --green:#10B981;--green-dim:rgba(16,185,129,.12);
+      --amber:#F59E0B;--amber-dim:rgba(245,158,11,.12);
+      --red:#EF4444;--red-dim:rgba(239,68,68,.12);
+      --r:10px;--r-lg:16px;
+    }
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;font-size:14px;-webkit-font-smoothing:antialiased;}
+    ::-webkit-scrollbar{width:3px;} ::-webkit-scrollbar-thumb{background:var(--surface3);}
+    .sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;position:fixed;top:0;left:0;bottom:0;}
+    .s-logo{padding:18px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);}
+    .s-mark{width:32px;height:32px;background:var(--brand);border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;color:#fff;box-shadow:0 0 12px rgba(99,102,241,.3);}
+    .s-name{font-size:15px;font-weight:800;letter-spacing:-.02em;}
+    .s-tag{font-size:9px;font-weight:700;background:var(--brand-dim);color:var(--brand);padding:2px 6px;border-radius:4px;letter-spacing:.06em;text-transform:uppercase;margin-left:4px;}
+    .s-group{padding:14px 14px 4px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);}
+    .nav-btn{display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500;transition:all .1s;margin:1px 6px;border:none;background:transparent;width:calc(100% - 12px);text-align:left;}
+    .nav-btn:hover{background:var(--surface2);color:var(--text);}
+    .nav-btn.active{background:var(--brand-dim);color:var(--brand);border:1px solid rgba(99,102,241,.2);}
+    .nav-icon{font-size:14px;width:16px;text-align:center;flex-shrink:0;}
+    .s-bottom{margin-top:auto;padding:10px;border-top:1px solid var(--border);}
+    .s-user{display:flex;align-items:center;gap:8px;padding:8px;}
+    .s-av{width:28px;height:28px;border-radius:8px;background:var(--brand-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--brand);}
+    .s-info{flex:1;} .s-uname{font-size:12px;font-weight:600;} .s-urole{font-size:10px;color:var(--text3);}
+    .main{flex:1;margin-left:220px;overflow-y:auto;min-height:100vh;}
+    .page{display:none;padding:28px 32px;}
+    .page.active{display:block;}
+    .page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;}
+    .page-title{font-size:22px;font-weight:700;letter-spacing:-.02em;}
+    .page-sub{font-size:12px;color:var(--text3);margin-top:3px;}
+    .header-actions{display:flex;gap:8px;}
+    .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:14px;}
+    .panel-head{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--border);}
+    .panel-head h3{font-size:12px;font-weight:600;}
+    .panel-body{padding:16px 18px;}
+    .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+    .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+    .kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;}
+    .kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 16px;position:relative;overflow:hidden;}
+    .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--kc,var(--brand));}
+    .kpi.green{--kc:var(--green);} .kpi.red{--kc:var(--red);} .kpi.amber{--kc:var(--amber);}
+    .kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px;}
+    .kpi-val{font-size:20px;font-weight:700;}
+    .badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;}
+    .badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
+    .badge.green{background:var(--green-dim);color:var(--green);}
+    .badge.blue{background:var(--brand-dim);color:var(--brand);}
+    .badge.amber{background:var(--amber-dim);color:var(--amber);}
+    .badge.red{background:var(--red-dim);color:var(--red);}
+    .badge.gray{background:var(--surface3);color:var(--text3);}
+    .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px;text-align:center;color:var(--text3);gap:8px;}
+    button.primary{background:var(--brand);color:#fff;border:none;border-radius:8px;padding:9px 18px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+    button.primary:hover{background:var(--brand-dark);}
+    button.primary:disabled{opacity:.5;cursor:not-allowed;}
+    button.secondary{background:var(--surface3);color:var(--text2);border:1px solid var(--border2);border-radius:8px;padding:8px 14px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;}
+    button.secondary:hover{border-color:var(--brand);color:var(--brand);}
+    button.ghost{background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font:inherit;font-size:12px;cursor:pointer;}
+    button.ghost:hover{color:var(--text2);border-color:var(--border2);}
+    button.danger{background:var(--red-dim);color:var(--red);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:7px 12px;font:inherit;font-size:12px;cursor:pointer;}
+    label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;margin-top:12px;}
+    input,textarea,select{width:100%;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font:inherit;font-size:13px;padding:9px 12px;outline:none;transition:border-color .15s;}
+    input:focus,textarea:focus,select:focus{border-color:var(--brand);}
+    textarea{resize:vertical;min-height:72px;}
+    .row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:12px;}
+    .row:last-child{border-bottom:none;}
+    #toast{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:6px;}
+    .t-item{background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:10px 14px;font-size:12px;font-weight:500;box-shadow:0 8px 32px rgba(0,0,0,.6);display:flex;align-items:center;gap:8px;}
+    .t-item.ok{border-color:rgba(16,185,129,.3);color:var(--green);}
+    .t-item.err{border-color:rgba(239,68,68,.3);color:var(--red);}
+    .chat-wrap{display:flex;flex-direction:column;height:calc(100vh - 200px);}
+    .chat-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;}
+    .bubble{max-width:80%;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.6;}
+    .bubble.user{background:var(--brand);color:#fff;align-self:flex-end;border-bottom-right-radius:4px;}
+    .bubble.assistant{background:var(--surface3);border:1px solid var(--border2);align-self:flex-start;border-bottom-left-radius:4px;white-space:pre-wrap;}
+    .bubble.assistant pre{background:var(--surface);border-radius:6px;padding:10px;font-size:11px;margin-top:8px;overflow-x:auto;}
+    .chat-input-row{padding:12px;border-top:1px solid var(--border);display:flex;gap:8px;}
+    .chat-input-row textarea{min-height:52px;flex:1;}
+    .quick-btns{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px 0;}
+    .ind-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px;margin-bottom:8px;}
+    .ind-card-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+    .ind-name{font-size:13px;font-weight:600;flex:1;}
+    .ind-slug{font-size:10px;color:var(--text3);background:var(--surface3);padding:2px 6px;border-radius:4px;font-family:monospace;}
+    .chip{display:inline-flex;align-items:center;background:var(--surface3);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--text2);margin:2px;}
+  </style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="s-logo">
+    <div class="s-mark">BZ</div>
+    <div class="s-name">Banzai<span class="s-tag">Admin</span></div>
+  </div>
+  <div class="s-group">Dashboard</div>
+  <button class="nav-btn active" onclick="go('overview')"><span class="nav-icon">⬡</span> Overview</button>
+  <button class="nav-btn" onclick="go('chat')"><span class="nav-icon">✦</span> IA Experta</button>
+  <div class="s-group">Gestión</div>
+  <button class="nav-btn" onclick="go('industries')"><span class="nav-icon">◈</span> Rubros del Agente</button>
+  <button class="nav-btn" onclick="go('users')"><span class="nav-icon">👥</span> Vendedores</button>
+  <button class="nav-btn" onclick="go('billing')"><span class="nav-icon">💳</span> Facturación</button>
+  <button class="nav-btn" onclick="go('surveys')"><span class="nav-icon">💬</span> Encuestas</button>
+  <button class="nav-btn" onclick="go('releases')"><span class="nav-icon">✦</span> Versiones</button>
+  <button class="nav-btn" onclick="go('updates')"><span class="nav-icon">⚡</span> Actualizaciones</button>
+  <button class="nav-btn" onclick="go('reports')"><span class="nav-icon">◉</span> Reportes</button>
+  <button class="nav-btn" onclick="go('events')"><span class="nav-icon">◎</span> Eventos</button>
+  <div class="s-bottom">
+    <div class="s-user">
+      <div class="s-av">SA</div>
+      <div class="s-info">
+        <div class="s-uname">Super Admin</div>
+        <div class="s-urole">superadmin@banzai84.com</div>
+      </div>
+      <button class="ghost" onclick="logout()" style="padding:4px 8px;font-size:11px;">↩</button>
+    </div>
+  </div>
+</nav>
+
+<main class="main">
+
+  <!-- Overview -->
+  <div class="page active" id="page-overview">
+    <div class="page-header">
+      <div><div class="page-title">Overview</div><div class="page-sub">Panel de control de Banzai84</div></div>
+      <div class="header-actions">
+        <button class="ghost" onclick="loadOverview()">↺ Actualizar</button>
+        <button class="primary" onclick="go('chat')">✦ IA Experta</button>
+      </div>
+    </div>
+    <div id="overview-status" style="margin-bottom:16px;"></div>
+    <div class="kpi-row" id="kpi-row"><div class="kpi"><div class="kpi-label">Cargando...</div><div class="kpi-val">—</div></div></div>
+    <div class="g2">
+      <div class="panel">
+        <div class="panel-head"><h3>Últimos eventos de agentes</h3><button class="ghost" onclick="loadEvents()" style="font-size:11px;">↺</button></div>
+        <div class="panel-body" style="max-height:280px;overflow-y:auto;" id="events-list"><div class="empty"><div>Sin eventos</div></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Rubros activos del Sales Agent</h3><span class="badge blue" id="ind-badge">—</span></div>
+        <div class="panel-body" style="max-height:280px;overflow-y:auto;" id="ind-overview"><div class="empty"><div>Cargando...</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IA Chat -->
+  <div class="page" id="page-chat">
+    <div class="page-header">
+      <div><div class="page-title">IA Experta</div><div class="page-sub">Experta en Banzai y todos los aspectos de negocios</div></div>
+    </div>
+    <div class="panel" style="height:calc(100vh - 180px);display:flex;flex-direction:column;">
+      <div class="quick-btns">
+        <button class="ghost" style="font-size:11px;" onclick="ask('¿Cuántos rubros tengo y cuáles son?')">¿Qué rubros tengo?</button>
+        <button class="ghost" style="font-size:11px;" onclick="ask('Creá un rubro para veterinarias con tácticas y objeciones')">+ Veterinaria</button>
+        <button class="ghost" style="font-size:11px;" onclick="ask('¿Cómo está el negocio? Analizá los KPIs')">Analizar KPIs</button>
+        <button class="ghost" style="font-size:11px;" onclick="ask('Dame el mejor script para cerrar una distribuidora')">Script distribuidora</button>
+        <button class="ghost" style="font-size:11px;" onclick="ask('¿Cómo llego a $10.000 USD de MRR con Banzai?')">Estrategia $10k MRR</button>
+      </div>
+      <div class="chat-msgs" id="chat-msgs"></div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" placeholder="Preguntá cualquier cosa..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+        <button class="primary" onclick="sendMsg()" style="align-self:flex-end;">Enviar ↑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Industries -->
+  <div class="page" id="page-industries">
+    <div class="page-header">
+      <div><div class="page-title">Rubros del Agente</div><div class="page-sub">Editá tácticas, objeciones y keywords</div></div>
+      <div class="header-actions">
+        <button class="primary" onclick="openIndForm()">+ Nuevo rubro</button>
+      </div>
+    </div>
+    <div class="panel" id="ind-form" style="display:none;margin-bottom:16px;">
+      <div class="panel-head"><h3 id="ind-form-title">Nuevo rubro</h3><button class="ghost" onclick="closeIndForm()" style="font-size:11px;">Cancelar</button></div>
+      <div class="panel-body">
+        <div class="g2">
+          <div>
+            <label>Slug</label><input id="f-slug" placeholder="ej: veterinaria">
+            <label>Nombre</label><input id="f-name" placeholder="ej: Veterinaria">
+            <label>Upsell</label><input id="f-upsell" placeholder="ej: El pack anual ahorra 20%">
+          </div>
+          <div>
+            <label>Tácticas (una por línea)</label><textarea id="f-tactics" placeholder="precio por volumen"></textarea>
+            <label>KPIs (una por línea)</label><textarea id="f-kpis" style="min-height:56px;" placeholder="ticket promedio"></textarea>
+          </div>
+        </div>
+        <label>Keywords (separadas por coma)</label>
+        <input id="f-keywords" placeholder="veterinaria, mascota, perro">
+        <label>Objeciones (objeción: respuesta — una por línea)</label>
+        <textarea id="f-objections" placeholder="caro: ¿Cuánto cuesta no tenerlo?"></textarea>
+        <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+          <button class="ghost" onclick="closeIndForm()">Cancelar</button>
+          <button class="primary" onclick="saveIndustry()">Guardar rubro</button>
+        </div>
+      </div>
+    </div>
+    <div id="ind-list"><div class="empty"><div>Cargando rubros...</div></div></div>
+  </div>
+
+  <!-- Users -->
+  <div class="page" id="page-users">
+    <div class="page-header">
+      <div><div class="page-title">Vendedores</div><div class="page-sub">Creá usuarios @banzai84.com · Controlá permisos</div></div>
+    </div>
+    <div class="g2">
+      <div class="panel">
+        <div class="panel-head"><h3>Usuarios activos</h3><button class="ghost" onclick="loadUsers()" style="font-size:11px;">↺</button></div>
+        <div class="panel-body" id="users-list"><div class="empty"><div>Cargando...</div></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Crear usuario @banzai84.com</h3></div>
+        <div class="panel-body">
+          <label>Nombre completo</label><input id="qc-name" placeholder="Carlos García">
+          <label>Username</label><input id="qc-user" placeholder="carlos.garcia">
+          <label>Contraseña</label><input id="qc-pass" type="password">
+          <label>Rol</label>
+          <select id="qc-role">
+            <option value="seller">Vendedor</option>
+            <option value="viewer">Visor</option>
+            <option value="demo">Demo temporal</option>
+          </select>
+          <div id="qc-result" style="display:none;margin-top:10px;padding:10px;border-radius:8px;font-size:12px;"></div>
+          <div style="margin-top:12px;"><button class="primary" style="width:100%;justify-content:center;" onclick="quickCreate()">Crear usuario</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Billing -->
+  <div class="page" id="page-billing">
+    <div class="page-header">
+      <div><div class="page-title">Facturación</div><div class="page-sub">Planes · Pagos · Historial</div></div>
+      <div class="header-actions"><button class="primary" onclick="openPlanForm()">+ Nuevo plan</button></div>
+    </div>
+    <div class="g2">
+      <div class="panel">
+        <div class="panel-head"><h3>Planes activos</h3></div>
+        <div class="panel-body" id="plans-list"><div class="empty"><div>Sin planes</div></div></div>
+      </div>
+      <div class="panel" id="plan-form">
+        <div class="panel-head"><h3>Nuevo plan</h3></div>
+        <div class="panel-body">
+          <label>Nombre</label><input id="plan-name" placeholder="Ej: Banzai Growth">
+          <label>Descripción</label><input id="plan-desc">
+          <div class="g2" style="gap:10px;">
+            <div><label>Precio</label><input id="plan-price" type="number"></div>
+            <div><label>Moneda</label><select id="plan-cur"><option>USD</option><option>ARS</option></select></div>
+          </div>
+          <label>Período</label><select id="plan-int"><option value="month">Mensual</option><option value="year">Anual</option></select>
+          <div style="margin-top:12px;"><button class="primary" style="width:100%;justify-content:center;" onclick="savePlan()">Guardar plan</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:14px;">
+      <div class="panel-head"><h3>Registrar pago manual</h3></div>
+      <div class="panel-body">
+        <div class="g2">
+          <div><label>Cliente</label><input id="pay-name"><label>Email</label><input id="pay-email" type="email"></div>
+          <div>
+            <div class="g2" style="gap:10px;"><div><label>Monto</label><input id="pay-amount" type="number"></div><div><label>Moneda</label><select id="pay-cur"><option>USD</option><option>ARS</option></select></div></div>
+            <label>Método</label><select id="pay-method"><option value="transfer">Transferencia</option><option value="cash">Efectivo</option><option value="mp">MercadoPago</option></select>
+            <label>Referencia</label><input id="pay-ref">
+          </div>
+        </div>
+        <div style="margin-top:12px;"><button class="primary" onclick="registerPayment()">Registrar pago</button></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:14px;">
+      <div class="panel-head"><h3>Historial de pagos</h3><button class="ghost" onclick="loadPayments()" style="font-size:11px;">↺</button></div>
+      <div class="panel-body" id="payments-list"><div class="empty"><div>Sin pagos</div></div></div>
+    </div>
+  </div>
+
+  <!-- Surveys -->
+  <div class="page" id="page-surveys">
+    <div class="page-header">
+      <div><div class="page-title">Encuestas</div><div class="page-sub">Feedback · Actualizaciones pendientes</div></div>
+      <div class="header-actions">
+        <button class="secondary" onclick="loadSurveys()">↺ Actualizar</button>
+        <button class="primary" onclick="sendSurveys()">📨 Enviar encuestas</button>
+      </div>
+    </div>
+    <div id="pending-section" style="margin-bottom:14px;"></div>
+    <div class="panel">
+      <div class="panel-head"><h3>Todas las encuestas</h3><span class="badge gray" id="surveys-count">—</span></div>
+      <div class="panel-body" id="surveys-list"><div class="empty"><div>Sin encuestas</div></div></div>
+    </div>
+  </div>
+
+  <!-- Releases -->
+  <div class="page" id="page-releases">
+    <div class="page-header">
+      <div><div class="page-title">Versiones</div><div class="page-sub">Nombrá cada versión como quieras</div></div>
+    </div>
+    <div class="g2">
+      <div class="panel">
+        <div class="panel-head"><h3>Versión actual</h3></div>
+        <div class="panel-body" id="current-version"><div class="empty"><div>Cargando...</div></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Nombrar versión</h3></div>
+        <div class="panel-body">
+          <label>Nombre</label><input id="rel-name" placeholder="Ej: Operación Cóndor">
+          <label>Descripción (opcional)</label><textarea id="rel-desc" style="min-height:56px;"></textarea>
+          <div style="margin-top:12px;"><button class="primary" style="width:100%;justify-content:center;" onclick="saveRelease()">Guardar nombre</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:14px;">
+      <div class="panel-head"><h3>Historial</h3></div>
+      <div class="panel-body" id="releases-list"><div class="empty"><div>Sin versiones</div></div></div>
+    </div>
+  </div>
+
+  <!-- Updates -->
+  <div class="page" id="page-updates">
+    <div class="page-header">
+      <div><div class="page-title">Actualizaciones con IA</div><div class="page-sub">Modificá Banzai84 con IA sin tocar código</div></div>
+    </div>
+    <div class="panel" style="margin-bottom:14px;">
+      <div class="panel-head"><h3>⚙ Configuración GitHub y Railway</h3><button class="ghost" onclick="toggleConfig()" id="config-toggle" style="font-size:11px;">Editar</button></div>
+      <div class="panel-body" id="updates-config-body">
+        <div id="config-status" style="font-size:12px;color:var(--text2);">Cargando...</div>
+      </div>
+      <div class="panel-body" id="updates-config-form" style="display:none;">
+        <label>GitHub Token (ghp_...)</label>
+        <input id="cfg-github-token" type="password" placeholder="ghp_...">
+        <label>GitHub Repo</label>
+        <input id="cfg-github-repo" placeholder="twilliamsfritz-alt/banzai84" value="twilliamsfritz-alt/banzai84">
+        <label>Railway Deploy Webhook (opcional)</label>
+        <input id="cfg-railway-webhook" placeholder="https://backboard.railway.app/webhooks/...">
+        <label>OpenAI API Key</label>
+        <input id="cfg-openai-key" type="password" placeholder="sk-...">
+        <div style="margin-top:12px;display:flex;gap:8px;">
+          <button class="primary" onclick="saveConfig()">Guardar</button>
+          <button class="ghost" onclick="toggleConfig()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+    <div class="g2">
+      <div>
+        <div class="panel" style="margin-bottom:14px;">
+          <div class="panel-head"><h3>🤖 Generador de cambios con IA</h3></div>
+          <div class="panel-body">
+            <label>Archivo a modificar</label>
+            <select id="upd-file">
+              <option value="app.py">app.py — Backend principal</option>
+              <option value="static/app.js">static/app.js — Frontend JavaScript</option>
+              <option value="templates/index.html">templates/index.html — HTML del cliente</option>
+            </select>
+            <label>¿Qué querés cambiar? (en español)</label>
+            <textarea id="upd-desc" style="min-height:100px;" placeholder="Ej: Agregá un campo de prioridad en los deals del pipeline"></textarea>
+            <label>Mensaje del commit</label>
+            <input id="upd-msg" placeholder="ej: Agregar prioridad en deals">
+            <div style="margin-top:12px;display:flex;gap:8px;">
+              <button class="primary" onclick="generateChange()" id="btn-generate">✦ Generar con IA</button>
+              <button class="ghost" onclick="loadFileContent()">Ver archivo actual</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>⚡ Cambios rápidos</h3></div>
+          <div class="panel-body" style="display:flex;flex-direction:column;gap:6px;">
+            <button class="secondary" style="text-align:left;font-size:12px;" onclick="quickChange('Agrega un campo de prioridad alta/media/baja en los deals del pipeline', 'app.py', 'Agregar prioridad en deals')">+ Campo prioridad en deals</button>
+            <button class="secondary" style="text-align:left;font-size:12px;" onclick="quickChange('Agrega soporte para rubro de farmacia independiente con tacticas del sector farmaceutico', 'app.py', 'Rubro farmacia')">+ Rubro farmacia independiente</button>
+            <button class="secondary" style="text-align:left;font-size:12px;" onclick="quickChange('Agrega una seccion de metricas por vendedor que muestre deals cerrados, revenue y tasa de cierre de cada usuario con rol seller', 'app.py', 'Metricas por vendedor')">+ Métricas por vendedor</button>
+            <button class="secondary" style="text-align:left;font-size:12px;" onclick="quickChange('Modifica el Sales Agent para que detecte cuando el cliente menciona competidores y responda destacando ventajas de Banzai', 'app.py', 'Sales Agent detecta competidores')">+ Sales Agent detecta competidores</button>
+            <button class="secondary" style="text-align:left;font-size:12px;" onclick="quickChange('Agrega un resumen diario automatico al owner con deals del dia, ingresos y tareas pendientes', 'app.py', 'Resumen diario automatico')">+ Resumen diario automático</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="panel" style="height:100%;">
+          <div class="panel-head"><h3>👁 Preview del código</h3><span class="badge gray" id="upd-file-badge">—</span></div>
+          <div style="padding:0 16px 8px;font-size:11px;color:var(--text3);" id="upd-preview-info"></div>
+          <div style="margin:0 16px;">
+            <textarea id="upd-preview" style="min-height:340px;font-family:monospace;font-size:11px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;padding:12px;width:100%;resize:vertical;" placeholder="El código generado aparece acá. Podés editarlo antes de deployar."></textarea>
+          </div>
+          <div style="padding:12px 16px 16px;display:flex;gap:8px;">
+            <button class="primary" onclick="deployChange()" id="btn-deploy" disabled>🚀 Deploy a Railway</button>
+            <button class="secondary" onclick="copyCode()">Copiar</button>
+            <button class="ghost" onclick="clearPreview()">✕</button>
+          </div>
+          <div id="deploy-result" style="margin:0 16px 16px;font-size:12px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reports -->
+  <div class="page" id="page-reports">
+    <div class="page-header">
+      <div><div class="page-title">Reportes en vivo</div><div class="page-sub">P&L · Deals · Inventario</div></div>
+      <div class="header-actions"><button class="secondary" onclick="loadReports()">↺ Actualizar</button></div>
+    </div>
+    <div class="kpi-row" id="reports-kpis"></div>
+    <div class="g2" id="reports-detail"></div>
+  </div>
+
+  <!-- Events -->
+  <div class="page" id="page-events">
+    <div class="page-header">
+      <div><div class="page-title">Eventos de agentes</div><div class="page-sub">Log de actividad en tiempo real</div></div>
+      <div class="header-actions">
+        <button class="secondary" onclick="loadEvents(true)">↺ Actualizar</button>
+        <button class="primary" onclick="runAudit()">🔍 Auditar</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Últimos 20 eventos</h3></div>
+      <div class="panel-body" id="events-full"><div class="empty"><div>Sin eventos</div></div></div>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+function $(id){ return document.getElementById(id); }
+function toast(msg, type){
+  if(!type) type='ok';
+  var el=document.createElement('div');
+  el.className='t-item '+type;
+  el.textContent=msg;
+  $('toast').appendChild(el);
+  setTimeout(function(){el.remove();},3500);
+}
+function fmt(v,cur){
+  if(!cur) cur='USD';
+  return new Intl.NumberFormat('es-AR',{style:'currency',currency:cur,maximumFractionDigits:0}).format(v||0);
+}
+
+function go(id){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.remove('active');});
+  $('page-'+id).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(function(b){
+    if(b.getAttribute('onclick')==="go('"+id+"')") b.classList.add('active');
+  });
+  var loaders={
+    overview:loadOverview,
+    industries:loadIndustries,
+    users:loadUsers,
+    billing:function(){loadPlans();loadPayments();},
+    surveys:loadSurveys,
+    releases:loadReleases,
+    updates:loadUpdatesStatus,
+    reports:loadReports,
+    events:function(){loadEvents(true);}
+  };
+  if(loaders[id]) loaders[id]();
+}
+
+async function api(path,opts){
+  if(!opts) opts={};
+  if(!opts.headers) opts.headers={'Content-Type':'application/json'};
+  try {
+    var r=await fetch(path,opts);
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    return d;
+  } catch(e){
+    console.warn('API error:',path,e.message);
+    throw e;
+  }
+}
+
+async function loadOverview(){
+  try {
+    var d=await api('/api/proxy/dashboard');
+    var kpis=d.dashboard&&d.dashboard.kpis?d.dashboard.kpis:{};
+    var cur=d.dashboard&&d.dashboard.user?d.dashboard.user.currency||'USD':'USD';
+    $('kpi-row').innerHTML=[
+      {l:'Conversaciones',v:kpis.open_chats||0,c:''},
+      {l:'Hot leads',v:kpis.hot_leads||0,c:'amber'},
+      {l:'Ingresos',v:fmt(kpis.income||0,cur),c:'green'},
+      {l:'Gastos',v:fmt(kpis.expenses||0,cur),c:'red'},
+      {l:'Flujo neto',v:fmt(kpis.net||0,cur),c:(kpis.net||0)>=0?'green':'red'},
+    ].map(function(k){return '<div class="kpi '+k.c+'"><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'</div></div>';}).join('');
+    $('overview-status').innerHTML='<div style="font-size:12px;color:var(--green);margin-bottom:8px;">✓ Conectado a Banzai</div>';
+  } catch(e){
+    $('overview-status').innerHTML='<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:12px 16px;font-size:12px;color:var(--amber);margin-bottom:8px;">⚠ Sin conexión a Banzai — iniciá Banzai en el puerto 5000 y recargá</div>';
+    $('kpi-row').innerHTML='';
+  }
+  loadEvents(false);
+  loadIndustriesOverview();
+}
+
+async function loadEvents(full){
+  try {
+    var r=await api('/api/proxy/agents/events');
+    var evs=r.events||[];
+    var COLS={sales_agent:'var(--brand)',accounting_agent:'var(--green)',auditor_agent:'#A78BFA',ai_engine:'var(--amber)'};
+    var html=evs.length?evs.map(function(e){
+      return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);align-items:flex-start;">'
+        +'<div style="width:6px;height:6px;border-radius:50%;background:'+(COLS[e.agent]||'var(--text3)')+';flex-shrink:0;margin-top:5px;"></div>'
+        +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-size:10px;font-weight:700;text-transform:uppercase;color:'+(COLS[e.agent]||'var(--text3)')+';">'+(e.agent||'—')+'</div>'
+        +'<div style="font-size:12px;">'+(e.action||'')+'</div>'
+        +'<div style="font-size:11px;color:var(--text3);">'+(e.output_summary||'')+'</div>'
+        +'</div>'
+        +'<div style="font-size:10px;color:var(--text3);">'+(e.created_at||'').substring(11,16)+'</div>'
+        +'</div>';
+    }).join(''):'<div class="empty"><div>Sin eventos todavía</div></div>';
+    if($('events-list')) $('events-list').innerHTML=html;
+    if(full&&$('events-full')) $('events-full').innerHTML=html;
+  } catch(e){
+    if($('events-list')) $('events-list').innerHTML='<div class="empty"><div>Sin conexión</div></div>';
+  }
+}
+
+async function runAudit(){
+  try {
+    var r=await api('/api/proxy/agents/audit',{method:'POST'});
+    toast(r.report&&r.report.health==='ok'?'Auditoría: todo bien ✓':'Auditoría: issues detectados ⚠',r.report&&r.report.health==='ok'?'ok':'err');
+  } catch(e){toast('Error en auditoría','err');}
+}
+
+async function loadIndustriesOverview(){
+  try {
+    var r=await api('/api/proxy/industries');
+    var inds=r.industries||[];
+    $('ind-badge').textContent=inds.length+' rubros';
+    $('ind-overview').innerHTML=inds.slice(0,15).map(function(i){
+      return '<div class="row"><span style="font-size:12px;font-weight:500;">'+(i.name||i.slug)+'</span>'
+        +'<span class="badge '+(i.is_custom?'green':'gray')+'">'+(i.is_custom?'Custom':'Base')+'</span></div>';
+    }).join('');
+  } catch(e){$('ind-overview').innerHTML='<div class="empty"><div>Sin conexión</div></div>';}
+}
+
+var editingSlug=null;
+var indsCache=[];
+
+async function loadIndustries(){
+  try {
+    var r=await api('/api/proxy/industries');
+    indsCache=r.industries||[];
+    $('ind-list').innerHTML=indsCache.length?indsCache.map(function(i){
+      return '<div class="ind-card">'
+        +'<div class="ind-card-head">'
+        +'<span class="ind-name">'+(i.name||i.slug)+'</span>'
+        +'<span class="ind-slug">'+i.slug+'</span>'
+        +'<span class="badge '+(i.is_custom?'green':'gray')+'">'+(i.is_custom?'Custom':'Base')+'</span>'
+        +'<button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="editInd(\''+i.slug+'\')">Editar</button>'
+        +(i.slug!=='default'?'<button class="danger" style="padding:3px 8px;font-size:11px;" onclick="deleteInd(\''+i.slug+'\')">✕</button>':'')
+        +'</div>'
+        +'<div>'+(i.tactics||[]).map(function(t){return '<span class="chip">'+t+'</span>';}).join('')+'</div>'
+        +'</div>';
+    }).join(''):'<div class="empty"><div>Sin rubros</div></div>';
+  } catch(e){$('ind-list').innerHTML='<div class="empty"><div>Error al cargar rubros</div></div>';}
+}
+
+function openIndForm(){editingSlug=null;$('ind-form-title').textContent='Nuevo rubro';$('ind-form').style.display='block';['f-slug','f-name','f-upsell','f-tactics','f-kpis','f-keywords','f-objections'].forEach(function(id){$(id).value='';});$('ind-form').scrollIntoView({behavior:'smooth'});}
+function closeIndForm(){$('ind-form').style.display='none';editingSlug=null;}
+
+function editInd(slug){
+  var i=indsCache.find(function(x){return x.slug===slug;});
+  if(!i) return;
+  editingSlug=slug;
+  $('ind-form-title').textContent='Editar: '+i.name;
+  $('f-slug').value=slug;$('f-name').value=i.name||'';$('f-upsell').value=i.upsell||'';
+  $('f-tactics').value=(i.tactics||[]).join('\n');
+  $('f-kpis').value=(i.kpis||[]).join('\n');
+  $('f-keywords').value=(i.keywords||[]).join(', ');
+  $('f-objections').value=Object.entries(i.objections||{}).map(function(kv){return kv[0]+': '+kv[1];}).join('\n');
+  $('ind-form').style.display='block';$('ind-form').scrollIntoView({behavior:'smooth'});
+}
+
+async function saveIndustry(){
+  var slug=$('f-slug').value.trim().toLowerCase().replace(/\s+/g,'_');
+  var name=$('f-name').value.trim();
+  if(!slug||!name){toast('Slug y nombre obligatorios','err');return;}
+  var obj={};
+  $('f-objections').value.split('\n').forEach(function(l){var i=l.indexOf(':');if(i>0)obj[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+  var payload={slug:slug,name:name,tactics:$('f-tactics').value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
+    kpis:$('f-kpis').value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
+    keywords:$('f-keywords').value.split(',').map(function(s){return s.trim();}).filter(Boolean),
+    objections:obj,upsell:$('f-upsell').value.trim()};
+  try {
+    if(editingSlug) await api('/api/proxy/industries/'+editingSlug,{method:'PUT',body:JSON.stringify(payload)});
+    else await api('/api/proxy/industries',{method:'POST',body:JSON.stringify(payload)});
+    toast('Rubro guardado ✓','ok');closeIndForm();await loadIndustries();
+  } catch(e){toast(e.message,'err');}
+}
+
+async function deleteInd(slug){
+  if(!confirm('¿Eliminar "'+slug+'"?')) return;
+  try{await api('/api/proxy/industries/'+slug,{method:'DELETE'});toast('Eliminado','ok');await loadIndustries();}
+  catch(e){toast(e.message,'err');}
+}
+
+async function loadUsers(){
+  try {
+    var r=await api('/api/proxy/users');
+    var users=r.users||[];
+    $('users-list').innerHTML=users.length?users.map(function(u){
+      return '<div class="row"><div>'
+        +'<div style="font-weight:600;font-size:13px;">'+u.name+'</div>'
+        +'<div style="font-size:11px;color:var(--text3);">'+u.email+'</div>'
+        +'</div><div style="display:flex;align-items:center;gap:6px;">'
+        +'<span class="badge '+(u.role==='owner'?'green':u.role==='seller'?'blue':'gray')+'">'+u.role+'</span>'
+        +(!u.active?'<span class="badge red">Inactivo</span>':'')
+        +(u.role!=='owner'?'<button onclick="toggleUser('+u.id+','+(u.active?0:1)+')" style="padding:3px 8px;font-size:10px;background:var(--surface3);border:1px solid var(--border2);border-radius:5px;color:var(--text2);cursor:pointer;">'+(u.active?'Suspender':'Activar')+'</button>':'')
+        +'</div></div>';
+    }).join(''):'<div class="empty"><div>Sin usuarios</div></div>';
+  } catch(e){$('users-list').innerHTML='<div class="empty"><div>Error al cargar</div></div>';}
+}
+
+async function quickCreate(){
+  var name=$('qc-name').value.trim(),user=$('qc-user').value.trim(),pass=$('qc-pass').value,role=$('qc-role').value;
+  if(!name||!user||!pass){toast('Completá todos los campos','err');return;}
+  try {
+    var r=await api('/api/proxy/users/quick-create',{method:'POST',body:JSON.stringify({name:name,username:user,password:pass,role:role})});
+    var res=$('qc-result');
+    res.style.display='block';res.style.background='var(--green-dim)';res.style.border='1px solid rgba(16,185,129,.2)';
+    res.innerHTML='✓ <strong>'+r.email+'</strong> · Contraseña: <strong>'+pass+'</strong>';
+    $('qc-name').value='';$('qc-user').value='';$('qc-pass').value='';
+    toast('Usuario '+r.email+' creado ✓','ok');await loadUsers();
+  } catch(e){toast(e.message,'err');}
+}
+
+async function toggleUser(id,active){
+  try{await api('/api/proxy/users/'+id,{method:'PUT',body:JSON.stringify({active:active})});toast(active?'Activado':'Suspendido','ok');await loadUsers();}
+  catch(e){toast(e.message,'err');}
+}
+
+async function loadPlans(){
+  try {
+    var r=await api('/api/proxy/billing/plans');
+    $('plans-list').innerHTML=(r.plans||[]).length?(r.plans||[]).map(function(p){
+      return '<div class="row"><div><div style="font-weight:600;">'+p.name+'</div><div style="font-size:11px;color:var(--text3);">'+(p.description||'')+'</div></div>'
+        +'<div style="font-size:14px;font-weight:700;color:var(--brand);">$'+p.price+' '+p.currency+'/'+(p.interval==='month'?'mes':'año')+'</div></div>';
+    }).join(''):'<div class="empty"><div>Sin planes</div></div>';
+  } catch(e){}
+}
+
+async function savePlan(){
+  var payload={name:$('plan-name').value.trim(),description:$('plan-desc').value.trim(),price:parseFloat($('plan-price').value||0),currency:$('plan-cur').value,interval:$('plan-int').value};
+  if(!payload.name){toast('Nombre obligatorio','err');return;}
+  try{await api('/api/proxy/billing/plans',{method:'POST',body:JSON.stringify(payload)});toast('Plan creado ✓','ok');await loadPlans();}
+  catch(e){toast(e.message,'err');}
+}
+
+function openPlanForm(){$('plan-form').scrollIntoView({behavior:'smooth'});}
+
+async function loadPayments(){
+  try {
+    var r=await api('/api/proxy/billing/payments');
+    $('payments-list').innerHTML=(r.payments||[]).length?(r.payments||[]).map(function(p){
+      return '<div class="row"><div><div style="font-weight:500;">'+p.customer_name+'</div><div style="font-size:10px;color:var(--text3);">'+(p.banzai_invoice_number||'')+' · '+p.method+' · '+(p.created_at||'').substring(0,10)+'</div></div>'
+        +'<div style="display:flex;align-items:center;gap:6px;"><span style="font-weight:700;color:var(--green);">$'+p.amount+' '+p.currency+'</span>'
+        +'<span class="badge '+(p.status==='paid'?'green':'amber')+'">'+p.status+'</span></div></div>';
+    }).join(''):'<div class="empty"><div>Sin pagos</div></div>';
+  } catch(e){}
+}
+
+async function registerPayment(){
+  var payload={customer_name:$('pay-name').value.trim(),customer_email:$('pay-email').value.trim(),amount:parseFloat($('pay-amount').value||0),currency:$('pay-cur').value,method:$('pay-method').value,reference:$('pay-ref').value.trim(),status:'paid'};
+  if(!payload.customer_name||!payload.amount){toast('Completá los campos','err');return;}
+  try{var r=await api('/api/proxy/billing/payments',{method:'POST',body:JSON.stringify(payload)});toast('Pago registrado — '+r.invoice_number+' ✓','ok');await loadPayments();}
+  catch(e){toast(e.message,'err');}
+}
+
+async function loadSurveys(){
+  try {
+    var r=await api('/api/proxy/surveys');
+    var surveys=r.surveys||[],pending=r.pending_updates||0;
+    $('surveys-count').textContent=surveys.length;
+    if(pending>0){
+      var pendingHtml='<div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:12px;padding:14px 18px;margin-bottom:12px;">'
+        +'<div style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:10px;">⚡ '+pending+' actualizaciones pendientes de tu aprobación</div>';
+      surveys.filter(function(s){return s.update_status==='requested';}).forEach(function(s){
+        pendingHtml+='<div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:8px;">'
+          +'<div style="font-size:13px;font-weight:600;margin-bottom:6px;">'+s.customer_name+' · NPS '+s.nps_score+'</div>'
+          +'<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">"'+(s.response_text||'')+'"</div>'
+          +'<div style="background:var(--surface3);border-radius:8px;padding:10px;margin-bottom:10px;font-size:13px;">'+s.suggested_update+'</div>'
+          +'<textarea id="upd-'+s.id+'" style="min-height:56px;margin-bottom:8px;">'+s.suggested_update+'</textarea>'
+          +'<div style="display:flex;gap:8px;">'
+          +'<button class="primary" onclick="activateUpdate('+s.id+')" style="flex:1;justify-content:center;">✓ Activar</button>'
+          +'<button class="danger" onclick="rejectUpdate('+s.id+')">✕ Rechazar</button>'
+          +'</div></div>';
+      });
+      pendingHtml+='</div>';
+      $('pending-section').innerHTML=pendingHtml;
+    } else {
+      $('pending-section').innerHTML='';
+    }
+    $('surveys-list').innerHTML=surveys.length?surveys.map(function(s){
+      return '<div class="row"><div><div style="font-weight:500;">'+s.customer_name+'</div><div style="font-size:11px;color:var(--text3);">'+s.customer_email+' · '+(s.sent_at||'').substring(0,10)+'</div></div>'
+        +'<div style="display:flex;align-items:center;gap:6px;">'
+        +(s.nps_score!==null?'<span class="badge '+(s.nps_score>=9?'green':s.nps_score>=7?'blue':'red')+'">NPS '+s.nps_score+'</span>':'<span class="badge gray">—</span>')
+        +'<span class="badge '+(s.status==='responded'?'green':'gray')+'">'+(s.status==='responded'?'Respondió':'Pendiente')+'</span>'
+        +'</div></div>';
+    }).join(''):'<div class="empty"><div>Sin encuestas</div></div>';
+  } catch(e){$('surveys-list').innerHTML='<div class="empty"><div>Error al cargar</div></div>';}
+}
+
+async function sendSurveys(){try{var r=await api('/api/proxy/surveys/send',{method:'POST',body:JSON.stringify({})});toast(r.sent+' encuestas enviadas ✓','ok');await loadSurveys();}catch(e){toast(e.message,'err');}}
+async function activateUpdate(id){var txt=$('upd-'+id)?$('upd-'+id).value.trim():'';if(!txt){toast('Escribí la versión aprobada','err');return;}if(!confirm('¿Activar?'))return;try{await api('/api/proxy/surveys/'+id+'/activate',{method:'POST',body:JSON.stringify({confirmed_update:txt})});toast('Activada ✓','ok');await loadSurveys();}catch(e){toast(e.message,'err');}}
+async function rejectUpdate(id){try{await api('/api/proxy/surveys/'+id+'/reject',{method:'POST',body:JSON.stringify({})});toast('Rechazada','ok');await loadSurveys();}catch(e){toast(e.message,'err');}}
+
+async function loadReleases(){
+  try {
+    var r=await api('/api/proxy/releases');
+    var cur=r.current||{};
+    $('current-version').innerHTML='<div style="text-align:center;padding:16px;"><div style="font-size:32px;font-weight:800;color:var(--brand);">'+(cur.release_name||cur.version||'—')+'</div><div style="font-size:12px;color:var(--text3);margin-top:6px;">versión '+cur.version+'</div></div>';
+    $('releases-list').innerHTML=(r.releases||[]).length?(r.releases||[]).map(function(rel){
+      return '<div class="row"><div><div style="font-size:14px;font-weight:700;color:var(--brand);">'+rel.release_name+'</div><div style="font-size:11px;color:var(--text3);">v'+rel.version+' · '+(rel.created_at||'').substring(0,10)+'</div></div></div>';
+    }).join(''):'<div class="empty"><div>Sin versiones</div></div>';
+  } catch(e){}
+}
+
+async function saveRelease(){
+  var name=$('rel-name').value.trim();
+  if(!name){toast('El nombre es obligatorio','err');return;}
+  try{await api('/api/proxy/releases',{method:'POST',body:JSON.stringify({release_name:name,description:$('rel-desc').value.trim()})});toast('Versión "'+name+'" guardada ✓','ok');$('rel-name').value='';$('rel-desc').value='';await loadReleases();}
+  catch(e){toast(e.message,'err');}
+}
+
+async function loadReports(){
+  try {
+    var r=await api('/api/proxy/reports');
+    var pl=r.pl||{},cur=r.currency||'USD';
+    $('reports-kpis').innerHTML=[
+      {l:'Ingresos',v:fmt(pl.income||0,cur),c:'green'},
+      {l:'Gastos',v:fmt(pl.expenses||0,cur),c:'red'},
+      {l:'Neto',v:fmt(pl.net||0,cur),c:(pl.net||0)>=0?'green':'red'},
+      {l:'Margen',v:(pl.margin_pct||0)+'%',c:''},
+      {l:'Deals cerrados',v:fmt((r.deals&&r.deals.total_closed_value)||0,cur),c:'green'},
+    ].map(function(k){return '<div class="kpi '+k.c+'"><div class="kpi-label">'+k.l+'</div><div class="kpi-val">'+k.v+'</div></div>';}).join('');
+    $('reports-detail').innerHTML=[
+      {title:'Ingresos por categoría',data:r.income_by_category||{}},
+      {title:'Gastos por categoría',data:r.expense_by_category||{}},
+    ].map(function(s){
+      return '<div class="panel"><div class="panel-head"><h3>'+s.title+'</h3></div><div class="panel-body">'
+        +(Object.keys(s.data).length?Object.entries(s.data).map(function(kv){return '<div class="row"><span>'+kv[0]+'</span><strong>'+fmt(kv[1],cur)+'</strong></div>';}).join(''):'<div class="empty"><div>Sin datos</div></div>')
+        +'</div></div>';
+    }).join('');
+  } catch(e){$('reports-kpis').innerHTML='<div style="grid-column:1/-1;" class="empty"><div>Sin conexión a Banzai</div></div>';}
+}
+
+var chatHistory=[];
+function bubble(role,text){
+  var el=$('chat-msgs');
+  var b=document.createElement('div');
+  b.className='bubble '+role;
+  if(role==='assistant'){
+    b.innerHTML=text.replace(/\n/g,'<br>');
+  } else {
+    b.textContent=text;
+  }
+  el.appendChild(b);
+  el.scrollTop=el.scrollHeight;
+}
+
+function ask(msg){$('chat-input').value=msg;sendMsg();}
+
+async function sendMsg(){
+  var input=$('chat-input').value.trim();
+  if(!input) return;
+  bubble('user',input);
+  chatHistory.push({role:'user',content:input});
+  $('chat-input').value='';
+  var typing=document.createElement('div');
+  typing.className='bubble assistant';typing.id='typing';typing.style.opacity='.5';typing.textContent='Pensando...';
+  $('chat-msgs').appendChild(typing);
+  $('chat-msgs').scrollTop=$('chat-msgs').scrollHeight;
+  try {
+    var r=await api('/api/ai-chat',{method:'POST',body:JSON.stringify({message:input,history:chatHistory.slice(-6)})});
+    $('typing')&&$('typing').remove();
+    var reply=r.reply||'Sin respuesta';
+    bubble('assistant',reply);
+    chatHistory.push({role:'assistant',content:reply});
+  } catch(e){$('typing')&&$('typing').remove();bubble('assistant','Error: '+e.message);}
+}
+
+// ── Updates System ──────────────────────────────────────────────────────────
+var updatesCurrentContent='';
+var updatesFilePath='app.py';
+
+async function loadUpdatesStatus(){
+  try {
+    var r=await api('/api/updates/status');
+    var html='';
+    if(r.github_configured){
+      html+='<div style="margin-bottom:4px;color:var(--green);">✓ GitHub conectado — '+r.github_repo+'</div>';
+    } else {
+      html+='<div style="margin-bottom:4px;color:var(--amber);">⚠ GitHub no configurado — hacé clic en Editar</div>';
+    }
+    if(r.railway_configured){
+      html+='<div style="color:var(--green);">✓ Railway webhook activo</div>';
+    } else {
+      html+='<div style="color:var(--text3);">— Railway webhook opcional (el deploy funciona igual via GitHub)</div>';
+    }
+    $('config-status').innerHTML=html;
+  } catch(e){
+    $('config-status').innerHTML='<span style="color:var(--red);">Error al cargar estado</span>';
+  }
+}
+
+function toggleConfig(){
+  var form=$('updates-config-form');
+  var body=$('updates-config-body');
+  var isHidden=form.style.display==='none';
+  form.style.display=isHidden?'block':'none';
+  body.style.display=isHidden?'none':'block';
+  $('config-toggle').textContent=isHidden?'Cancelar':'Editar';
+}
+
+async function saveConfig(){
+  var payload={
+    github_token:$('cfg-github-token').value.trim(),
+    github_repo:$('cfg-github-repo').value.trim(),
+    railway_webhook:$('cfg-railway-webhook').value.trim(),
+    openai_key:$('cfg-openai-key').value.trim(),
+  };
+  try{
+    await api('/api/updates/save-config',{method:'POST',body:JSON.stringify(payload)});
+    toast('Configuración guardada ✓','ok');
+    toggleConfig();
+    await loadUpdatesStatus();
+  } catch(e){toast(e.message,'err');}
+}
+
+async function loadFileContent(){
+  var fp=$('upd-file').value;
+  $('upd-file-badge').textContent=fp;
+  $('upd-preview').value='Cargando '+fp+'...';
+  try {
+    var r=await api('/api/updates/file?path='+encodeURIComponent(fp));
+    updatesCurrentContent=r.content;
+    updatesFilePath=fp;
+    $('upd-preview').value=r.content;
+    var lines=r.content.split('\n').length;
+    $('upd-preview-info').textContent=fp+' — '+lines+' líneas';
+    toast('Archivo cargado ✓','ok');
+  } catch(e){$('upd-preview').value='Error: '+e.message;toast(e.message,'err');}
+}
+
+async function generateChange(){
+  var desc=$('upd-desc').value.trim();
+  var fp=$('upd-file').value;
+  if(!desc){toast('Describí qué querés cambiar','err');return;}
+  $('btn-generate').disabled=true;
+  $('btn-generate').textContent='✦ Generando...';
+  $('upd-preview').value='La IA está analizando el código y generando los cambios...\n\nEsto puede tomar 20-40 segundos...';
+  $('upd-file-badge').textContent=fp;
+  updatesFilePath=fp;
+  if(!updatesCurrentContent||updatesFilePath!==fp){
+    try{var fr=await api('/api/updates/file?path='+encodeURIComponent(fp));updatesCurrentContent=fr.content;}
+    catch(e){updatesCurrentContent='';}
+  }
+  try {
+    var r=await api('/api/updates/generate',{method:'POST',body:JSON.stringify({
+      description:desc,file_path:fp,current_content:updatesCurrentContent
+    })});
+    $('upd-preview').value=r.code;
+    updatesCurrentContent=r.code;
+    $('upd-preview-info').textContent=fp+' generado — '+r.code.split('\n').length+' líneas. Revisá antes de deployar.';
+    $('btn-deploy').disabled=false;
+    toast('Código generado ✓ — revisá antes de deployar','ok');
+  } catch(e){
+    $('upd-preview').value='Error: '+e.message;
+    toast(e.message,'err');
+  }
+  $('btn-generate').disabled=false;
+  $('btn-generate').textContent='✦ Generar con IA';
+}
+
+function quickChange(desc,file,msg){
+  $('upd-desc').value=desc;
+  $('upd-file').value=file;
+  $('upd-msg').value=msg;
+  updatesFilePath=file;
+  updatesCurrentContent='';
+  generateChange();
+}
+
+async function deployChange(){
+  var code=$('upd-preview').value.trim();
+  var fp=$('upd-file').value;
+  var msg=$('upd-msg').value.trim()||'Update via Banzai Admin';
+  if(!code){toast('No hay código para deployar','err');return;}
+  if(!confirm('¿Deployar "'+msg+'" a Railway?')) return;
+  $('btn-deploy').disabled=true;
+  $('btn-deploy').textContent='🚀 Deployando...';
+  $('deploy-result').innerHTML='';
+  try {
+    var r=await api('/api/updates/deploy',{method:'POST',body:JSON.stringify({code:code,file_path:fp,message:msg})});
+    $('deploy-result').innerHTML='<div style="background:var(--green-dim);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:12px;margin-top:8px;">'
+      +'<div style="font-weight:700;color:var(--green);margin-bottom:6px;">✓ '+r.message+'</div>'
+      +(r.railway_triggered?'<div style="font-size:11px;color:var(--green);">✓ Railway redeploy disparado automáticamente</div>':'<div style="font-size:11px;color:var(--text3);">Railway va a detectar el cambio en ~30 segundos</div>')
+      +(r.commit_url?'<div style="margin-top:6px;"><a href="'+r.commit_url+'" target="_blank" style="font-size:11px;color:var(--brand);">Ver commit en GitHub →</a></div>':'')
+      +'</div>';
+    toast('Deployado exitosamente ✓','ok');
+    $('upd-desc').value='';$('upd-preview').value='';$('btn-deploy').disabled=true;
+  } catch(e){
+    $('deploy-result').innerHTML='<div style="background:var(--red-dim);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px;color:var(--red);">✗ '+e.message+'</div>';
+    toast(e.message,'err');
+  }
+  $('btn-deploy').textContent='🚀 Deploy a Railway';
+  $('btn-deploy').disabled=false;
+}
+
+function copyCode(){
+  var code=$('upd-preview').value;
+  if(!code){toast('No hay código para copiar','err');return;}
+  navigator.clipboard.writeText(code).then(function(){toast('Código copiado ✓','ok');}).catch(function(){toast('Error al copiar','err');});
+}
+
+function clearPreview(){
+  $('upd-preview').value='';$('upd-preview-info').textContent='';$('upd-file-badge').textContent='—';
+  $('btn-deploy').disabled=true;$('deploy-result').innerHTML='';updatesCurrentContent='';
+}
+
+async function logout(){await api('/api/admin-logout',{method:'POST'});window.location.href='/';}
+
+loadOverview();
+bubble('assistant','¡Hola! Soy la IA experta de Banzai Admin.\n\nPuedo ayudarte con:\n• Crear y editar rubros del Sales Agent\n• Analizar el negocio en tiempo real\n• Scripts de ventas por industria\n• Estrategia de crecimiento\n\n¿Qué necesitás?');
+</script>
+</body>
+</html>
