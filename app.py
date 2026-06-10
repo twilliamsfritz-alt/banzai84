@@ -604,10 +604,129 @@ CREATE TABLE IF NOT EXISTS tax_profiles (
 """
 
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+# ── Database connection ───────────────────────────────────────────────────
+
+def get_db():
+    database_url = os.environ.get("DATABASE_URL", "")
+    if database_url and "postgres" in database_url:
+        import psycopg2
+        import psycopg2.extras
+        url = database_url.replace("postgres://", "postgresql://", 1)
+        conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+        conn.autocommit = False
+        return _PgConn(conn)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+class _PgConn:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            try: self._conn.rollback()
+            except Exception: pass
+        self.close()
+
+    def close(self):
+        try: self._conn.close()
+        except Exception: pass
+
+    def commit(self):
+        self._conn.commit()
+
+    def execute(self, sql, params=()):
+        s = sql.replace("?", "%s")
+        s = s.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+        if "INSERT OR IGNORE INTO" in s:
+            s = s.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip() + " ON CONFLICT DO NOTHING"
+        if "INSERT OR REPLACE INTO" in s:
+            s = s.replace("INSERT OR REPLACE INTO", "INSERT INTO")
+            if "ON CONFLICT" not in s:
+                s = s.rstrip() + " ON CONFLICT DO NOTHING"
+        cur = self._conn.cursor()
+        try:
+            cur.execute(s, params if params else ())
+        except Exception:
+            try: self._conn.rollback()
+            except Exception: pass
+            raise
+        return _PgCursor(cur)
+
+    def executescript(self, sql):
+        s = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+        s = s.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+        s = s.replace("INSERT OR REPLACE INTO", "INSERT INTO")
+        cur = self._conn.cursor()
+        for stmt in s.split(";"):
+            stmt = stmt.strip()
+            if len(stmt) < 5:
+                continue
+            try:
+                cur.execute(stmt)
+                self._conn.commit()
+            except Exception:
+                try: self._conn.rollback()
+                except Exception: pass
+
+
+class _PgCursor:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None:
+            return None
+        return _Row(dict(row) if isinstance(row, dict) else dict(zip([d[0] for d in self._cur.description], row)))
+
+    def fetchall(self):
+        rows = self._cur.fetchall()
+        if not rows:
+            return []
+        if isinstance(rows[0], dict):
+            return [_Row(r) for r in rows]
+        cols = [d[0] for d in self._cur.description]
+        return [_Row(dict(zip(cols, r))) for r in rows]
+
+    @property
+    def lastrowid(self):
+        try:
+            self._cur.execute("SELECT lastval()")
+            r = self._cur.fetchone()
+            return list(r.values())[0] if isinstance(r, dict) else r[0]
+        except Exception:
+            return None
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _Row(dict):
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        try:
+            return super().__getitem__(key)
+        except KeyError:
+            for k in self.keys():
+                if k.lower() == str(key).lower():
+                    return super().__getitem__(k)
+            raise
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except (KeyError, IndexError):
+            return default
+
 
 
 def is_setup_complete() -> bool:
@@ -621,16 +740,52 @@ def is_setup_complete() -> bool:
 
 
 def init_db(force_reset: bool = False) -> None:
-    if force_reset and DB_PATH.exists():
+    database_url = os.environ.get("DATABASE_URL", "")
+    is_postgres = database_url and database_url.startswith("postgres")
+    
+    if force_reset and not is_postgres and DB_PATH.exists():
         DB_PATH.unlink()
 
     with closing(get_db()) as conn:
-        conn.executescript(SCHEMA)
-        conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", ("schema_version", APP_VERSION))
-        conn.commit()
-        existing = conn.execute("SELECT COUNT(*) AS count FROM workspaces").fetchone()["count"]
-        if existing:
-            return  # DB already initialized
+        if is_postgres:
+            # For PostgreSQL, run each statement individually
+            import psycopg2
+            schema_pg = SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+            schema_pg = schema_pg.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+            schema_pg = schema_pg.replace("INSERT OR REPLACE INTO", "INSERT INTO")
+            cur = conn._conn.cursor()
+            for stmt in schema_pg.split(";"):
+                stmt = stmt.strip()
+                if stmt and len(stmt) > 5:
+                    try:
+                        cur.execute(stmt)
+                        conn._conn.commit()
+                    except Exception as e:
+                        conn._conn.rollback()
+                        # Table already exists is fine
+                        if "already exists" not in str(e):
+                            pass
+            # Insert version
+            try:
+                cur.execute("INSERT INTO app_meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                           ("schema_version", APP_VERSION))
+                conn._conn.commit()
+            except Exception:
+                conn._conn.rollback()
+            try:
+                cur.execute("SELECT COUNT(*) FROM workspaces")
+                count = cur.fetchone()[0]
+                if count:
+                    return
+            except Exception:
+                pass
+        else:
+            conn.executescript(SCHEMA)
+            conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", ("schema_version", APP_VERSION))
+            conn.commit()
+            existing = conn.execute("SELECT COUNT(*) AS count FROM workspaces").fetchone()["count"]
+            if existing:
+                return  # DB already initialized
 
 
 
@@ -1716,10 +1871,18 @@ def api_setup():
         )
 
         # Mark setup complete
-        conn.execute(
-            "INSERT OR REPLACE INTO setup (id, completed, workspace_name, owner_name, owner_email, region, currency, language, completed_at) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?)",
-            (workspace_name, owner_name, owner_email, region, final_currency, final_language, now),
-        )
+        database_url = os.environ.get("DATABASE_URL", "")
+        is_postgres = database_url and database_url.startswith("postgres")
+        if is_postgres:
+            conn.execute(
+                "INSERT INTO setup (id, completed, workspace_name, owner_name, owner_email, region, currency, language, completed_at) VALUES (1, 1, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET completed=1, completed_at=EXCLUDED.completed_at",
+                (workspace_name, owner_name, owner_email, region, final_currency, final_language, now),
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO setup (id, completed, workspace_name, owner_name, owner_email, region, currency, language, completed_at) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?)",
+                (workspace_name, owner_name, owner_email, region, final_currency, final_language, now),
+            )
         conn.commit()
 
     return jsonify({"ok": True, "redirect": "/"})
