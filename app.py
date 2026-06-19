@@ -5043,7 +5043,7 @@ def admin_required(f):
     from functools import wraps
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("bz_admin_logged_in"):
+        if not session.get("bz_admin_ok"):
             return redirect("/bz-admin/login")
         return f(*args, **kwargs)
     return decorated
@@ -5051,7 +5051,7 @@ def admin_required(f):
 
 @app.get("/bz-admin/login")
 def bz_admin_login_page():
-    if session.get("bz_admin_logged_in"):
+    if session.get("bz_admin_ok"):
         return redirect("/bz-admin/")
     return render_template_string(BZ_ADMIN_LOGIN_HTML)
 
@@ -5060,14 +5060,14 @@ def bz_admin_login_page():
 def bz_admin_login():
     d = request.get_json(force=True) or {}
     if d.get("email") == ADMIN_USERNAME and d.get("password") == ADMIN_PASSWORD_ADMIN:
-        session["bz_admin_logged_in"] = True
+        session["bz_admin_ok"] = True
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "Credenciales incorrectas"}), 401
 
 
 @app.post("/bz-admin/api/logout")
 def bz_admin_logout():
-    session.pop("bz_admin_logged_in", None)
+    session.pop("bz_admin_ok", None)
     return jsonify({"ok": True})
 
 
