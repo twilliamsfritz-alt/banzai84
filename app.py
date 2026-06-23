@@ -5269,7 +5269,6 @@ def bz_admin_updates_file():
 
 
 @app.post("/bz-admin/api/updates/generate")
-@admin_required
 def bz_admin_updates_generate():
     d = request.get_json(force=True) or {}
     desc = d.get("description","").strip()
@@ -5324,3 +5323,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV", "production") == "development"
     app.run(host="0.0.0.0", port=port, debug=debug)
+
