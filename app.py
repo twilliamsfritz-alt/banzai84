@@ -5218,7 +5218,7 @@ def bz_admin_ai_chat():
     d = request.get_json(force=True) or {}
     message = d.get("message","")
     history = d.get("history",[])
-    if not OPENAI_API_KEY:
+    if not os.environ.get("OPENAI_API_KEY"):
         return jsonify({"ok":False,"error":"OpenAI API key no configurada"}), 400
     try:
         with closing(get_db()) as conn:
@@ -5276,7 +5276,7 @@ def bz_admin_updates_generate():
     fp = d.get("file_path","app.py")
     content = d.get("current_content","")
     if not desc: return jsonify({"ok":False,"error":"Descripcion requerida"}), 400
-    key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
+    key = os.environ.get("OPENAI_API_KEY","")
     if not key: return jsonify({"ok":False,"error":"OpenAI API key no configurada"}), 400
     preview = (content[:5000]+"\n# ... [TRUNCATED] ...\n"+content[-2000:]) if len(content)>8000 else content
     lang = "Python/Flask" if fp.endswith(".py") else "JavaScript"
@@ -5324,4 +5324,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV", "production") == "development"
     app.run(host="0.0.0.0", port=port, debug=debug)
+
 
