@@ -5227,7 +5227,7 @@ def bz_admin_ai_chat():
         sys_msg = f"Sos la IA Experta de Banzai Admin. TenÃ©s acceso completo al sistema. Rubros activos: {ind_list}. RespondÃ© en espaÃ±ol, sÃ© conciso y accionable."
         msgs = [{"role":"system","content":sys_msg}] + history[-4:] + [{"role":"user","content":message}]
         import openai as _oai
-        client = _oai.OpenAI(api_key=OPENAI_API_KEY)
+        client = _oai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY",""))
         resp = client.chat.completions.create(model="gpt-4o-mini",messages=msgs,max_tokens=800,temperature=0.7)
         return jsonify({"ok":True,"reply":resp.choices[0].message.content})
     except Exception as e:
@@ -5265,7 +5265,7 @@ def bz_admin_updates_file():
         if r.status_code != 200: return jsonify({"ok":False,"error":f"Error {r.status_code}"}), 500
         data = r.json()
         return jsonify({"ok":True,"content":base64.b64decode(data["content"]).decode("utf-8","replace"),"sha":data["sha"]})
-    except Exception as e: return jsonify({"ok":False,"error":str(e)}), 500
+    except Exception as e: return jsonify({"ok":False,"error":str(e)})
 
 
 @app.post("/bz-admin/api/updates/generate")
@@ -5290,7 +5290,7 @@ def bz_admin_updates_generate():
         if code_out.startswith("```"): code_out="\n".join(code_out.split("\n")[1:])
         if code_out.endswith("```"): code_out="\n".join(code_out.split("\n")[:-1])
         return jsonify({"ok":True,"code":code_out,"file_path":fp})
-    except Exception as e: return jsonify({"ok":False,"error":str(e)}), 500
+    except Exception as e: return jsonify({"ok":False,"error":str(e)})
 
 
 @app.post("/bz-admin/api/updates/deploy")
@@ -5316,13 +5316,14 @@ def bz_admin_updates_deploy():
                      json={"message":msg,"content":encoded,"sha":sha},timeout=15)
         if pr.status_code not in (200,201): return jsonify({"ok":False,"error":f"GitHub {pr.status_code}"}), 500
         return jsonify({"ok":True,"message":"Actualizado: "+fp,"railway_triggered":False,"commit_url":pr.json().get("commit",{}).get("html_url","")})
-    except Exception as e: return jsonify({"ok":False,"error":str(e)}), 500
+    except Exception as e: return jsonify({"ok":False,"error":str(e)})
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV", "production") == "development"
     app.run(host="0.0.0.0", port=port, debug=debug)
+
 
 
 
