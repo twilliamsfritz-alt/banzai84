@@ -104,6 +104,71 @@ def require_permission(user: dict, permission: str):
         raise PermissionError(f"Permission denied: {permission}")
 
 
+# ── Subscription Plans ────────────────────────────────────────────────────
+PLAN_FEATURES = {
+    "trial":      {"name": "Starter Gratuito",  "price": 0,   "currency": "USD", "features": ["agent_center","pipeline","contacts","deals"],                                                                                                 "max_users": 2},
+    "starter":    {"name": "Starter",            "price": 99,  "currency": "USD", "features": ["agent_center","pipeline","contacts","deals"],                                                                                                 "max_users": 2},
+    "basic":      {"name": "Basic",              "price": 149, "currency": "USD", "features": ["agent_center","pipeline","contacts","deals","broadcast"],                                                                                      "max_users": 3},
+    "pro":        {"name": "Pro",                "price": 249, "currency": "USD", "features": ["agent_center","pipeline","contacts","deals","broadcast","inventory"],                                                                          "max_users": 5},
+    "growth":     {"name": "Growth",             "price": 399, "currency": "USD", "features": ["agent_center","pipeline","contacts","deals","broadcast","inventory","finance","automation","surveys","export","tasks"],                         "max_users": 10},
+    "enterprise": {"name": "Enterprise",         "price": 799, "currency": "USD", "features": ["agent_center","pipeline","contacts","deals","broadcast","inventory","finance","automation","surveys","export","tasks","advisor","white_label"],  "max_users": 9999},
+}
+
+FEATURE_LABELS = {
+    "agent_center": "Agent Center (Sales AI)", "pipeline": "Pipeline Kanban",
+    "contacts": "Contactos 360", "deals": "Deals", "broadcast": "Broadcast",
+    "inventory": "Inventario", "finance": "Finanzas y P&L", "automation": "Automatizaciones",
+    "surveys": "Encuestas NPS", "export": "Export Excel", "tasks": "Tareas",
+    "advisor": "Asesor IA", "white_label": "White Label",
+}
+
+
+def get_workspace_plan(workspace_id):
+    try:
+        with closing(get_db()) as conn:
+            row = conn.execute("SELECT plan, trial_ends_at FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+            if not row:
+                return "trial"
+            plan = row["plan"] if row["plan"] else "trial"
+            if plan == "trial" and row["trial_ends_at"]:
+                try:
+                    import datetime as _dtm
+                    if _dtm.datetime.utcnow() > _dtm.datetime.fromisoformat(row["trial_ends_at"]):
+                        return "expired"
+                except Exception:
+                    pass
+            return plan
+    except Exception:
+        return "trial"
+
+
+def workspace_has_feature(workspace_id, feature):
+    plan = get_workspace_plan(workspace_id)
+    if plan == "expired":
+        return False
+    return feature in PLAN_FEATURES.get(plan, PLAN_FEATURES["trial"]).get("features", [])
+
+
+def plan_blocked_response(workspace_id, feature):
+    plan = get_workspace_plan(workspace_id)
+    plan_info = PLAN_FEATURES.get(plan, {})
+    needed = "growth"
+    for p, v in PLAN_FEATURES.items():
+        if feature in v.get("features", []):
+            needed = p
+            break
+    needed_info = PLAN_FEATURES.get(needed, {})
+    return jsonify({
+        "ok": False, "plan_required": True,
+        "current_plan": plan, "current_plan_name": plan_info.get("name", plan),
+        "required_plan": needed, "required_plan_name": needed_info.get("name", needed),
+        "required_price": needed_info.get("price", 0),
+        "feature": feature, "feature_label": FEATURE_LABELS.get(feature, feature),
+        "error": "Esta funcion requiere el plan " + needed_info.get("name", needed) + " ($" + str(needed_info.get("price", 0)) + "/mes)"
+    }), 403
+
+
+
 def log_access(user_id: int, workspace_id: int, action: str,
                resource: str = None, result: str = "ok", detail: str = None):
     try:
@@ -148,6 +213,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
     currency TEXT NOT NULL,
     language TEXT NOT NULL,
     tone TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'trial',
+    trial_ends_at TEXT,
+    plan_expires_at TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -790,6 +858,21 @@ def init_db(force_reset: bool = False) -> None:
 
 
 def auto_setup_if_needed():
+    # Migrate plan columns if needed
+    try:
+        with closing(get_db()) as conn:
+            for col_def in [
+                "ALTER TABLE workspaces ADD COLUMN plan TEXT DEFAULT 'trial'",
+                "ALTER TABLE workspaces ADD COLUMN trial_ends_at TEXT",
+                "ALTER TABLE workspaces ADD COLUMN plan_expires_at TEXT",
+            ]:
+                try:
+                    conn.execute(col_def)
+                    conn.commit()
+                except Exception:
+                    pass
+    except Exception:
+        pass
     """Auto-create admin account on first boot if ADMIN_EMAIL env var is set."""
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@banzai84.com")
     admin_pass = os.environ.get("ADMIN_PASSWORD", "Admin2026")
@@ -5318,6 +5401,194 @@ def bz_admin_updates_deploy():
         if pr.status_code not in (200,201): return jsonify({"ok":False,"error":f"GitHub {pr.status_code}"}), 500
         return jsonify({"ok":True,"message":"Actualizado: "+fp,"railway_triggered":False,"commit_url":pr.json().get("commit",{}).get("html_url","")})
     except Exception as e: return jsonify({"ok":False,"error":str(e)}), 500
+
+
+
+# ── Plan Management API ───────────────────────────────────────────────────
+
+@app.get("/api/plan/info")
+def api_plan_info():
+    user = session.get("user")
+    if not user:
+        return jsonify({"ok": False, "error": "No autenticado"}), 401
+    ws_id = user.get("workspace_id")
+    plan = get_workspace_plan(ws_id)
+    plan_info = PLAN_FEATURES.get(plan, PLAN_FEATURES["trial"])
+    all_plans = []
+    for k, v in PLAN_FEATURES.items():
+        if k != "trial":
+            all_plans.append({"id": k, "name": v["name"], "price": v["price"], "currency": v["currency"], "features": v["features"], "max_users": v["max_users"]})
+    return jsonify({"ok": True, "current_plan": plan, "plan_info": plan_info, "all_plans": all_plans, "feature_labels": FEATURE_LABELS})
+
+
+@app.get("/api/plan/check/<feature>")
+def api_plan_check(feature):
+    user = session.get("user")
+    if not user:
+        return jsonify({"ok": False, "error": "No autenticado"}), 401
+    ws_id = user.get("workspace_id")
+    has_it = workspace_has_feature(ws_id, feature)
+    return jsonify({"ok": True, "has_feature": has_it, "feature": feature})
+
+
+@app.get("/api/upgrade/info")
+def api_upgrade_info():
+    """Show upgrade options for current plan."""
+    user = session.get("user")
+    if not user:
+        return jsonify({"ok": False, "error": "No autenticado"}), 401
+    ws_id = user.get("workspace_id")
+    plan = get_workspace_plan(ws_id)
+    upgrades = []
+    found_current = False
+    for k, v in PLAN_FEATURES.items():
+        if k == "trial":
+            continue
+        if k == plan:
+            found_current = True
+            continue
+        if found_current:
+            upgrades.append({"id": k, "name": v["name"], "price": v["price"], "features": v["features"]})
+    return jsonify({"ok": True, "current_plan": plan, "upgrades": upgrades})
+
+
+@app.post("/bz-admin/api/proxy/workspaces/plan")
+def admin_set_workspace_plan():
+    if not session.get("bz_admin_ok"):
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    d = request.get_json(force=True) or {}
+    plan = d.get("plan", "trial")
+    workspace_id = d.get("workspace_id", 1)
+    if plan not in PLAN_FEATURES:
+        return jsonify({"ok": False, "error": "Plan invalido"}), 400
+    try:
+        with closing(get_db()) as conn:
+            # Set trial end date for trial plan
+            if plan == "trial":
+                from datetime import datetime as _dt3, timedelta
+                trial_end = (_dt3.utcnow() + timedelta(days=30)).isoformat()
+                conn.execute("UPDATE workspaces SET plan=%s, trial_ends_at=%s WHERE id=%s", (plan, trial_end, workspace_id))
+            else:
+                conn.execute("UPDATE workspaces SET plan=%s, trial_ends_at=NULL WHERE id=%s", (plan, workspace_id))
+            conn.commit()
+        return jsonify({"ok": True, "plan": plan, "plan_name": PLAN_FEATURES[plan]["name"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/bz-admin/api/proxy/workspaces/plan")
+def admin_get_workspace_plan():
+    if not session.get("bz_admin_ok"):
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    workspace_id = request.args.get("workspace_id", 1)
+    plan = get_workspace_plan(workspace_id)
+    plan_info = PLAN_FEATURES.get(plan, PLAN_FEATURES["trial"])
+    return jsonify({"ok": True, "plan": plan, "plan_info": plan_info, "all_plans": list(PLAN_FEATURES.keys()), "plan_features": PLAN_FEATURES})
+
+
+
+@app.get("/bz-admin/plans")
+def bz_admin_plans_page():
+    if not session.get("bz_admin_ok"):
+        return redirect("/bz-admin/login")
+    plan_list = []
+    for k, v in PLAN_FEATURES.items():
+        plan_list.append({"id": k, "name": v["name"], "price": v["price"], "features": v["features"], "max_users": v["max_users"]})
+    import json
+    plans_json = json.dumps(plan_list)
+    feature_labels_json = json.dumps(FEATURE_LABELS)
+    return render_template_string("""<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planes - Banzai Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{--bg:#06080F;--surface:#0C0F1A;--surface2:#111520;--surface3:#161B2E;--border:rgba(255,255,255,.07);--border2:rgba(255,255,255,.12);--text:#F0F2FA;--text2:#9AA3C2;--text3:#4E5B7A;--brand:#6366F1;--brand-dim:rgba(99,102,241,.12);--green:#10B981;--green-dim:rgba(16,185,129,.12);--amber:#F59E0B;--amber-dim:rgba(245,158,11,.12);--red:#EF4444;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);padding:32px;}
+h1{font-size:28px;font-weight:800;color:#6366F1;margin-bottom:8px;}
+.sub{color:var(--text2);font-size:14px;margin-bottom:32px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;}
+.card.trial{border-color:rgba(245,158,11,.3);}
+.card.starter{border-color:rgba(99,102,241,.3);}
+.card.basic{border-color:rgba(99,102,241,.4);}
+.card.pro{border-color:rgba(99,102,241,.5);}
+.card.growth{border-color:rgba(16,185,129,.4);}
+.card.enterprise{border-color:rgba(16,185,129,.6);background:rgba(16,185,129,.04);}
+.plan-name{font-size:20px;font-weight:700;margin-bottom:4px;}
+.plan-price{font-size:32px;font-weight:800;color:#6366F1;margin-bottom:16px;}
+.plan-price span{font-size:14px;color:var(--text2);font-weight:400;}
+.feat{font-size:12px;color:var(--text2);margin-bottom:4px;padding-left:12px;position:relative;}
+.feat:before{content:"✓";position:absolute;left:0;color:#10B981;font-weight:700;}
+.set-plan{margin-top:20px;display:flex;gap:8px;align-items:center;}
+select,input{background:var(--surface3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font:inherit;font-size:13px;padding:8px 12px;}
+button{background:#6366F1;color:#fff;border:none;border-radius:8px;padding:9px 18px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;}
+button:hover{background:#4F46E5;}
+.back{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;text-decoration:none;margin-bottom:24px;}
+.back:hover{color:var(--text);}
+.msg{margin-top:12px;font-size:12px;padding:8px 12px;border-radius:8px;display:none;}
+.msg.ok{background:rgba(16,185,129,.1);color:#10B981;border:1px solid rgba(16,185,129,.2);}
+.msg.err{background:rgba(239,68,68,.1);color:#EF4444;border:1px solid rgba(239,68,68,.2);}
+.ws-section{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:32px;}
+.ws-section h2{font-size:16px;font-weight:700;margin-bottom:16px;}
+</style></head><body>
+<a class="back" href="/bz-admin/">← Volver al Admin</a>
+<h1>Planes de Banzai84</h1>
+<p class="sub">Asigna planes a los workspaces de tus clientes desde aca.</p>
+
+<div class="ws-section">
+<h2>Cambiar plan del workspace activo</h2>
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+<select id="sel-plan">
+</select>
+<button onclick="setPlan()">Aplicar plan</button>
+<div id="plan-msg" class="msg"></div>
+</div>
+</div>
+
+<div class="grid" id="plans-grid"></div>
+
+<script>
+const PLANS = """ + plans_json + """;
+const LABELS = """ + feature_labels_json + """;
+
+const sel = document.getElementById('sel-plan');
+PLANS.forEach(p => {
+  const o = document.createElement('option');
+  o.value = p.id;
+  o.textContent = p.name + (p.price ? ' - $' + p.price + '/mes' : ' - GRATIS 30 dias');
+  sel.appendChild(o);
+});
+
+const grid = document.getElementById('plans-grid');
+PLANS.forEach(p => {
+  const card = document.createElement('div');
+  card.className = 'card ' + p.id;
+  const feats = p.features.map(f => '<div class="feat">'+(LABELS[f]||f)+'</div>').join('');
+  card.innerHTML = '<div class="plan-name">'+p.name+'</div>'
+    +'<div class="plan-price">'+(p.price ? '$'+p.price : 'GRATIS')+'<span>'+(p.price ? '/mes' : ' por 30 dias')+'</span></div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-bottom:12px;">Hasta '+p.max_users+' usuario'+(p.max_users>1?'s':'')+'</div>'
+    +feats;
+  grid.appendChild(card);
+});
+
+async function setPlan() {
+  const plan = document.getElementById('sel-plan').value;
+  const msg = document.getElementById('plan-msg');
+  try {
+    const r = await fetch('/bz-admin/api/proxy/workspaces/plan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan,workspace_id:1})});
+    const d = await r.json();
+    msg.className = 'msg ' + (d.ok ? 'ok' : 'err');
+    msg.textContent = d.ok ? 'Plan actualizado: ' + d.plan_name : d.error;
+    msg.style.display = 'block';
+    setTimeout(() => { msg.style.display = 'none'; }, 3000);
+  } catch(e) {
+    msg.className = 'msg err'; msg.textContent = 'Error: ' + e.message; msg.style.display = 'block';
+  }
+}
+</script>
+</body></html>""")
 
 
 if __name__ == "__main__":
