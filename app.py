@@ -1042,7 +1042,7 @@ INDUSTRY_PLAYBOOKS = {
     "clinica": {"tactics":["agenda sin esperas","resultados medibles","confidencialidad","seguimiento post-sesión","turnos online"],"objections":{"caro":"¿Cuánto vale resolver esto en 4 sesiones vs arrastrarlo 2 años?","no tengo tiempo":"Tenemos turnos a las 7am y por videollamada."},"upsell":"El pack trimestral tiene 15% de descuento y mejora los resultados.","kpis":["retención de pacientes","ticket promedio","cancelaciones"],"keywords":["clínica","clinica","médico","medico","salud","health","terapia","doctor","paciente","consultorio"]},
     "retail": {"tactics":["urgencia de stock limitado","bundle complementarios","programa de fidelidad","envío gratis por monto mínimo"],"objections":{"caro":"Tenemos financiación en 6 cuotas sin interés.","lo veo online más barato":"¿Incluye garantía local y soporte? El nuestro sí."},"upsell":"El 70% de los clientes también lleva el accesorio X. ¿Lo agregamos?","kpis":["ticket promedio","conversión","devoluciones"],"keywords":["tienda","store","retail","comercio","local","boutique","shop","kiosco"]},
     "agencia": {"tactics":["caso de éxito similar","ROI medible","onboarding rápido","reportes transparentes"],"objections":{"caro":"¿Cuánto cuesta no tenerlo? Calculemos el costo de oportunidad.","ya tenemos uno":"¿Qué resultados está dando? Comparemos métricas."},"upsell":"El plan anual incluye estrategia mensual y ahorra 2 meses vs mensual.","kpis":["CAC","LTV","churn mensual","NPS"],"keywords":["agencia","agency","marketing","publicidad","diseño","consultor","creativa"]},
-    "construccion": {"tactics":["precio por proyecto completo","garantía de materiales","entrega por etapas","stock reservado para la obra"],"objections":{"caro":"¿Comparaste calidad? El material B dura 3x más.","demora":"Tenemos stock garantizado para toda la obra."},"upsell":"Si cerrás el pedido completo hoy te incluyo el flete sin costo.","kpis":["margen por obra","tiempo de cobro","costo de materiales / presupuesto"],"keywords":["construc","obra","material","cemento","hierro","ferretería","ferreteria","pintura","plomería","electricidad"]},
+    "construccion": {"tactics":["precio por proyecto completo","garantía de materiales","entrega por etapas","stock reservado para la obra"],"objections":{"caro":"¿Comparaste calidad? El material B dura 3x más.","demora":"Tenemos stock garantizado para toda la obra."},"upsell":"Si cerrás el pedido completo hoy te incluyo el flete sin costo.","kpis":["margen por obra","tiempo de cobro","costo de materiales / presupuesto"],"keywords":["construc","obra","albañil","albañileria","contratista","cuadrilla","metro cuadrado"]},
     "gastro": {"tactics":["precio por volumen semanal","exclusividad de producto","entrega antes de las 7am","calidad certificada"],"objections":{"caro":"¿Cuánto tirás por merma con el proveedor actual? El nuestro viene con fecha garantizada.","tengo proveedor":"¿Te cobran el flete? Nosotros lo incluimos."},"upsell":"El combo panadería + lácteos tiene descuento de temporada esta semana.","kpis":["costo MP / venta","merma","rotación de carta"],"keywords":["restaurant","restaurante","café","cafe","gastronomía","gastronomia","cocina","food","bar","panadería","pizzería","sushi","catering"]},
     "tecnologia": {"tactics":["prueba gratuita 14 días","integración con herramientas existentes","soporte incluido","escalabilidad"],"objections":{"caro":"¿Cuánto cuesta el tiempo de tu equipo haciendo eso manualmente?","complejo":"Onboarding en 30 minutos, luego se maneja solo."},"upsell":"El plan Enterprise incluye API y usuarios ilimitados por solo 40% más.","kpis":["MRR","churn","NPS","tiempo hasta primer valor"],"keywords":["software","tech","app","sistema","digital","saas","código","codigo","startup","plataforma","web","ecommerce"]},
     "inmobiliaria": {"tactics":["urgencia de mercado","comparativa de zona","financiación bancaria","potencial de valorización"],"objections":{"caro":"En esta zona el m² subió 18% en 12 meses. Hoy es el precio más bajo que vas a ver.","lo pienso":"Hay 2 interesados. ¿Reservamos con señal mínima?"},"upsell":"Por $X más podés asegurar el estacionamiento que valoriza la propiedad.","kpis":["tiempo promedio de venta","precio vs tasación","comisión por operación"],"keywords":["inmobil","propiedad","alquiler","venta","m²","metros","depto","casa","lote","terreno","ph","oficina comercial"]},
@@ -1067,6 +1067,7 @@ INDUSTRY_PLAYBOOKS = {
     "financiero": {"tactics":["tasa diferencial por volumen","proceso 100% digital","aprobación en 24h","sin penalidad por pago anticipado"],"objections":{"caro":"Comparado con el banco, nuestra tasa efectiva es X% menor con aprobación 10x más rápida.","no califico":"Tenemos productos para todo perfil. ¿Cuánto necesitás y en cuánto tiempo?"},"upsell":"El seguro de cuota protege tus cuotas ante imprevistos sin costo adicional el primer año.","kpis":["morosidad","ticket promedio","tasa de aprobación","costo de fondeo"],"keywords":["préstamo","prestamo","crédito","credito","banco","fintech","inversión","inversion","ahorro","billetera","transferencia","cuota","financiamiento","microcrédito"]},
     "spa_belleza": {"tactics":["primer servicio con descuento","pack de sesiones con ahorro","membresía mensual","agenda online"],"objections":{"caro":"Por lo que cuesta un café diario tenés tu cuidado mensual.","no tengo tiempo":"Sesiones de 30 min, sin turno previo los miércoles."},"upsell":"El tratamiento facial + masaje completo tiene 25% de descuento en pack.","kpis":["ticket promedio","retención mensual","servicios adicionales por visita"],"keywords":["spa","belleza","peluquería","peluqueria","estética","estetica","manicura","pedicura","masaje","depilación","depilacion","tratamiento facial","uñas","cabello"]},
     "deportivo": {"tactics":["prueba gratuita","flexibilidad de horario","comunidad activa","progreso visible en 30 días"],"objections":{"caro":"¿Cuánto gastás en medicación o días de baja por no hacer actividad?","no tengo tiempo":"Tenemos clases de 45 min de lunes a sábado en 6 horarios distintos."},"upsell":"El plan anual sale equivalente a 10 meses y te deja el 20% adelantado para equipamiento.","kpis":["retención mensual","nuevos socios / mes","NPS","ocupación por clase"],"keywords":["club","deporte","fútbol","futbol","tenis","natación","natacion","paddle","crossfit","box","atletismo","básquet","basquet","rugby","entrenamiento"]},
+    "ferreteria": {"tactics":["descuento por volumen de compra","demostraciones de productos en el local","asesoramiento tecnico sobre el uso correcto","combos de herramienta + accesorios","fidelizacion con cuenta corriente para clientes frecuentes","financiacion en cuotas para compras grandes","reserva de stock para obras en curso","atencion prioritaria a maestros mayores de obra"],"objections":{"caro":"Comparalo con la marca que usabas antes. Esta dura el doble y la garantia te cubre.","lo consigo mas barato":"Puede ser, pero ahi te dan factura, asesoramiento y garantia? Aca si.","no tengo efectivo":"Tenemos cuenta corriente para clientes frecuentes y tarjeta hasta en 6 cuotas.","lo pienso":"Te lo separo hasta manana sin compromiso. Asi no te quedas sin stock.","necesito factura":"Por supuesto, facturamos todo. Solo paso tus datos.","me fias":"Para clientes nuevos no, pero arrancamos cuenta corriente despues de la segunda compra.","viene con garantia":"Si, todo lo que vendemos tiene garantia de fabrica. Te doy el comprobante.","no se si me sirve":"Contame para que lo necesitas y te armo lo justo, sin que gastes de mas."},"upsell":"Si llevas la herramienta, te conviene el set completo con los accesorios — sale mas barato junto.","kpis":["ticket promedio","rotacion de stock","clientes con cuenta corriente activa","margen por categoria"],"keywords":["ferreteria","ferretera","corralon","tornillo","tornillos","clavo","clavos","pintura","herramienta","herramientas","cemento","hierro","caño","caños","electricidad","plomeria","sanitario","grifería","cerradura","candado","taladro","amoladora","soldadora","construccion menor","bulonería"]},
     "default": {"tactics":["valor sobre precio","urgencia real","caso de éxito","próximo paso concreto"],"objections":{"caro":"¿Qué comparás exactamente? Veamos qué incluye cada opción.","lo pienso":"¿Qué información te falta para decidir hoy?"},"upsell":"¿Qué otro problema querés resolver mientras estamos?","kpis":["conversión","ticket promedio","retención"],"keywords":[]},
 }
 
@@ -5183,28 +5184,77 @@ def bz_admin_proxy(subpath):
                 user_data["currency"] = user_data.get("currency","USD")
                 return jsonify({"ok":True,"dashboard":{"kpis":{"open_chats":convs["c"] if convs else 0,"hot_leads":hot["c"] if hot else 0,"income":income,"expenses":expenses,"net":income-expenses},"user":user_data}})
             elif subpath == "industries" and method == "GET":
-                rows = conn.execute("SELECT * FROM industry_playbooks ORDER BY is_custom DESC, slug").fetchall()
-                return jsonify({"ok":True,"industries":[dict(r) for r in rows]})
+                import json as _json
+                merged = get_playbooks(1)
+                custom_slugs = set(_load_db_industries(1).keys())
+                industries_list = []
+                for slug, data in merged.items():
+                    industries_list.append({
+                        "slug": slug,
+                        "name": data.get("name", slug.replace("_"," ").title()),
+                        "tactics": data.get("tactics", []),
+                        "kpis": data.get("kpis", []),
+                        "keywords": data.get("keywords", []),
+                        "objections": data.get("objections", {}),
+                        "upsell": data.get("upsell", ""),
+                        "is_custom": slug in custom_slugs,
+                    })
+                industries_list.sort(key=lambda x: (not x["is_custom"], x["slug"]))
+                return jsonify({"ok":True,"industries":industries_list})
             elif subpath == "industries" and method == "POST":
                 import json as _json
                 d2 = body or {}
-                conn.execute("INSERT INTO industry_playbooks (slug,name,tactics,kpis,keywords,objections,upsell,is_custom) VALUES (?,?,?,?,?,?,?,1)",
-                    (d2.get("slug"),d2.get("name"),_json.dumps(d2.get("tactics",[])),_json.dumps(d2.get("kpis",[])),
-                     _json.dumps(d2.get("keywords",[])),_json.dumps(d2.get("objections",{})),d2.get("upsell","")))
+                slug = d2.get("slug","").strip().lower().replace(" ","_")
+                name = d2.get("name", slug)
+                playbook_data = {
+                    "name": name,
+                    "tactics": d2.get("tactics", []),
+                    "kpis": d2.get("kpis", []),
+                    "keywords": d2.get("keywords", []),
+                    "objections": d2.get("objections", {}),
+                    "upsell": d2.get("upsell", ""),
+                }
+                now_iso = datetime.utcnow().isoformat()
+                conn.execute(
+                    "INSERT INTO industry_playbooks (workspace_id,slug,name,data_json,created_at,updated_at) VALUES (0,%s,%s,%s,%s,%s) ON CONFLICT(workspace_id,slug) DO UPDATE SET name=%s,data_json=%s,updated_at=%s"
+                    if "postgres" in os.environ.get("DATABASE_URL","") else
+                    "INSERT OR REPLACE INTO industry_playbooks (workspace_id,slug,name,data_json,created_at,updated_at) VALUES (0,?,?,?,?,?)",
+                    (slug, name, _json.dumps(playbook_data), now_iso, now_iso, name, _json.dumps(playbook_data), now_iso)
+                    if "postgres" in os.environ.get("DATABASE_URL","") else
+                    (slug, name, _json.dumps(playbook_data), now_iso, now_iso)
+                )
                 conn.commit()
-                return jsonify({"ok":True})
+                return jsonify({"ok":True, "slug": slug})
             elif subpath.startswith("industries/") and method in ("PUT","DELETE"):
                 import json as _json
                 slug = subpath.split("/",1)[1]
                 if method == "DELETE":
-                    conn.execute("DELETE FROM industry_playbooks WHERE slug=?", (slug,))
+                    conn.execute("DELETE FROM industry_playbooks WHERE slug=%s" if "postgres" in os.environ.get("DATABASE_URL","") else "DELETE FROM industry_playbooks WHERE slug=?", (slug,))
                     conn.commit()
                     return jsonify({"ok":True})
                 else:
                     d2 = body or {}
-                    conn.execute("UPDATE industry_playbooks SET name=?,tactics=?,kpis=?,keywords=?,objections=?,upsell=?,is_custom=1 WHERE slug=?",
-                        (d2.get("name"),_json.dumps(d2.get("tactics",[])),_json.dumps(d2.get("kpis",[])),
-                         _json.dumps(d2.get("keywords",[])),_json.dumps(d2.get("objections",{})),d2.get("upsell",""),slug))
+                    name = d2.get("name", slug)
+                    playbook_data = {
+                        "name": name,
+                        "tactics": d2.get("tactics", []),
+                        "kpis": d2.get("kpis", []),
+                        "keywords": d2.get("keywords", []),
+                        "objections": d2.get("objections", {}),
+                        "upsell": d2.get("upsell", ""),
+                    }
+                    now_iso = datetime.utcnow().isoformat()
+                    is_pg = "postgres" in os.environ.get("DATABASE_URL","")
+                    if is_pg:
+                        conn.execute(
+                            "INSERT INTO industry_playbooks (workspace_id,slug,name,data_json,created_at,updated_at) VALUES (0,%s,%s,%s,%s,%s) ON CONFLICT(workspace_id,slug) DO UPDATE SET name=%s,data_json=%s,updated_at=%s",
+                            (slug, name, _json.dumps(playbook_data), now_iso, now_iso, name, _json.dumps(playbook_data), now_iso)
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO industry_playbooks (workspace_id,slug,name,data_json,created_at,updated_at) VALUES (0,?,?,?,?,?)",
+                            (slug, name, _json.dumps(playbook_data), now_iso, now_iso)
+                        )
                     conn.commit()
                     return jsonify({"ok":True})
             elif subpath == "users" and method == "GET":
