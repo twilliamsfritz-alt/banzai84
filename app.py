@@ -5301,7 +5301,7 @@ def bz_admin_ai_chat():
     d = request.get_json(force=True) or {}
     message = d.get("message","")
     history = d.get("history",[])
-    if not OPENAI_API_KEY:
+    if not os.environ.get("OPENAI_API_KEY"):
         return jsonify({"ok":False,"error":"OpenAI API key no configurada"}), 400
     try:
         with closing(get_db()) as conn:
@@ -5310,7 +5310,7 @@ def bz_admin_ai_chat():
         sys_msg = f"Sos la IA Experta de Banzai Admin. Tenés acceso completo al sistema. Rubros activos: {ind_list}. Respondé en español, sé conciso y accionable."
         msgs = [{"role":"system","content":sys_msg}] + history[-4:] + [{"role":"user","content":message}]
         import openai as _oai
-        client = _oai.OpenAI(api_key=OPENAI_API_KEY)
+        client = _oai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY",""))
         resp = client.chat.completions.create(model="gpt-4o-mini",messages=msgs,max_tokens=800,temperature=0.7)
         return jsonify({"ok":True,"reply":resp.choices[0].message.content})
     except Exception as e:
@@ -5359,7 +5359,7 @@ def bz_admin_updates_generate():
     fp = d.get("file_path","app.py")
     content = d.get("current_content","")
     if not desc: return jsonify({"ok":False,"error":"Descripcion requerida"}), 400
-    key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
+    key = os.environ.get("OPENAI_API_KEY", "")
     if not key: return jsonify({"ok":False,"error":"OpenAI API key no configurada"}), 400
     preview = (content[:5000]+"\n# ... [TRUNCATED] ...\n"+content[-2000:]) if len(content)>8000 else content
     lang = "Python/Flask" if fp.endswith(".py") else "JavaScript"
