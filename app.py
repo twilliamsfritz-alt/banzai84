@@ -448,6 +448,41 @@ CREATE TABLE IF NOT EXISTS billing_payments (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS vendor_invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    vendor_name TEXT,
+    invoice_number TEXT,
+    invoice_date TEXT,
+    due_date TEXT,
+    amount REAL,
+    currency TEXT DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'pending',
+    source_email TEXT,
+    source_subject TEXT,
+    raw_text TEXT,
+    file_name TEXT,
+    ledger_entry_id INTEGER,
+    extracted_confidence REAL DEFAULT 0,
+    needs_review INTEGER DEFAULT 0,
+    processed_at TEXT NOT NULL,
+    paid_at TEXT,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE TABLE IF NOT EXISTS email_inbox_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL UNIQUE,
+    imap_host TEXT,
+    imap_port INTEGER DEFAULT 993,
+    email_address TEXT,
+    email_password TEXT,
+    last_checked_at TEXT,
+    active INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
 CREATE TABLE IF NOT EXISTS release_names (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     version TEXT NOT NULL UNIQUE,
@@ -1149,7 +1184,10 @@ def generate_ai_reply(workspace_id: int, text: str, language: str, currency: str
             "en": "Always reply in English. Direct, commercially sharp tone.",
         }.get(language, f"Always reply in language: {language}.")
 
-        products_ctx = json.dumps([{"name":p["name"],"price":p["price"],"stock":p["stock"],"sku":p["sku"],"cost":p.get("cost",0)} for p in products[:15]], ensure_ascii=False)
+        if products:
+            products_ctx = json.dumps([{"name":p["name"],"price":p["price"],"stock":p["stock"],"sku":p["sku"]} for p in products[:15]], ensure_ascii=False)
+        else:
+            products_ctx = "NINGUN PRODUCTO CARGADO TODAVIA EN EL INVENTARIO - no inventes productos, precios ni stock. Decile al cliente que confirmás disponibilidad y precio, y pedile los datos del pedido para cotizar."
         recent_ctx   = json.dumps(recent_deals[:3], ensure_ascii=False)
         knowledge_ctx = json.dumps([a["title"] for a in knowledge[:10]], ensure_ascii=False)
         tactics_str   = ", ".join(playbook["tactics"])
@@ -1197,13 +1235,21 @@ def generate_ai_reply(workspace_id: int, text: str, language: str, currency: str
             "- Estrategia: Porter, FODA, océano azul, disruption, product-market fit\n\n"
 
             "CONTEXTO DEL NEGOCIO:\n"
-            f"- Productos disponibles: {products_ctx}\n"
+            f"- Productos disponibles (ESTOS SON LOS UNICOS PRODUCTOS REALES QUE EXISTEN): {products_ctx}\n"
             f"- Deals recientes cerrados: {recent_ctx}\n"
             f"- Base de conocimiento: {knowledge_ctx}\n"
             f"- Moneda: {currency}\n\n"
 
+            "REGLAS ESTRICTAS - NUNCA VIOLAR:\n"
+            "1. NUNCA inventes productos que no estén en la lista de 'Productos disponibles' de arriba. Si el cliente pide algo que no está en la lista, decile que consultás disponibilidad o que no lo tenés — nunca inventes que sí lo tenés.\n"
+            "2. NUNCA ofrezcas descuentos, promociones, flete gratis, cuotas o beneficios que el cliente no mencionó primero y que no estén explícitamente en las tácticas de la industria de arriba. No regales nada por iniciativa propia.\n"
+            "3. NUNCA inventes precios. Si un producto no tiene precio en la lista de arriba, decile al cliente que confirmás el precio y no des un número inventado.\n"
+            "4. NUNCA confirmes stock que no está en la lista de arriba. Si no tenés el dato de stock, decile que confirmás disponibilidad.\n"
+            "5. Si el cliente pregunta algo que no podés responder con la información de arriba, sé honesto: decile que confirmás esa información y volvés con la respuesta — no inventes.\n"
+            "6. Solo podés ofrecer el ángulo de upsell configurado arriba, y solo si tiene sentido con lo que el cliente ya pidió — nunca antes de que el cliente muestre intención de compra.\n\n"
+
             "Respondé en menos de 150 palabras salvo que la situación requiera detalle. "
-            "Sé humano, directo y comercialmente efectivo. Cerrá ventas."
+            "Sé humano, directo y comercialmente efectivo, pero SIEMPRE basado en datos reales del negocio, nunca en invenciones."
         )
 
         response = client.chat.completions.create(
@@ -1219,6 +1265,187 @@ def generate_ai_reply(workspace_id: int, text: str, language: str, currency: str
         return {"reply": reply_text.strip(), "provider": "openai", "used_openai": True, "industry": industry}
     except Exception as exc:
         return {"reply": fallback, "provider": f"openai_error:{type(exc).__name__}", "used_openai": False}
+
+
+
+
+# ── Vendor Invoice Email Ingestion ─────────────────────────────────────────
+
+def _extract_invoice_data_with_ai(text_content: str, filename: str) -> dict:
+    """Use OpenAI to extract structured invoice data from raw text (PDF or email body)."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key or OpenAI is None:
+        return {"vendor_name": None, "invoice_number": None, "invoice_date": None,
+                "amount": None, "currency": "USD", "is_paid": False, "confidence": 0.0}
+    try:
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            "Extrae los datos de esta factura de proveedor. Devolve SOLO un JSON valido con estas claves exactas:\n"
+            '{"vendor_name": string o null, "invoice_number": string o null, "invoice_date": "YYYY-MM-DD" o null, '
+            '"due_date": "YYYY-MM-DD" o null, "amount": number o null, "currency": "USD"/"ARS"/etc, '
+            '"is_paid": true/false (true solo si el texto dice explicitamente pagada/paid/abonada), "confidence": number entre 0 y 1}\n\n'
+            f"Archivo: {filename}\n\nContenido:\n{text_content[:6000]}"
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Sos un extractor de datos de facturas. Respondes solo JSON valido, sin markdown ni texto adicional."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=400,
+            temperature=0.0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:-1])
+        data = json.loads(raw)
+        return data
+    except Exception as e:
+        return {"vendor_name": None, "invoice_number": None, "invoice_date": None,
+                "amount": None, "currency": "USD", "is_paid": False, "confidence": 0.0, "error": str(e)}
+
+
+def _extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+    """Extract raw text from PDF bytes using pypdf if available."""
+    try:
+        import io as _io
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+        reader = PdfReader(_io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages[:5]:
+            text += page.extract_text() or ""
+        return text
+    except Exception as e:
+        return f"[Could not extract PDF text: {e}]"
+
+
+def check_vendor_invoice_inbox(workspace_id: int) -> dict:
+    """Connect to the configured mailbox via IMAP, find unread invoice attachments, extract and save them."""
+    import imaplib
+    import email as email_lib
+    from email.header import decode_header
+
+    with closing(get_db()) as conn:
+        cfg = conn.execute(
+            "SELECT * FROM email_inbox_config WHERE workspace_id = ? AND active = 1",
+            (workspace_id,)
+        ).fetchone()
+
+    if not cfg:
+        return {"ok": False, "error": "No hay una casilla de mail configurada para este negocio"}
+
+    cfg = dict(cfg)
+    processed = []
+    errors = []
+
+    try:
+        imap = imaplib.IMAP4_SSL(cfg["imap_host"], cfg.get("imap_port") or 993)
+        imap.login(cfg["email_address"], cfg["email_password"])
+        imap.select("INBOX")
+
+        status, message_ids = imap.search(None, "UNSEEN")
+        if status != "OK":
+            imap.logout()
+            return {"ok": False, "error": "No se pudo buscar mensajes"}
+
+        ids = message_ids[0].split()
+        now_iso = datetime.utcnow().isoformat()
+
+        for msg_id in ids[:20]:
+            try:
+                status, msg_data = imap.fetch(msg_id, "(RFC822)")
+                if status != "OK":
+                    continue
+                raw_email = msg_data[0][1]
+                msg = email_lib.message_from_bytes(raw_email)
+
+                subject_raw = decode_header(msg.get("Subject", ""))[0]
+                subject = subject_raw[0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode(subject_raw[1] or "utf-8", errors="ignore")
+
+                from_addr = msg.get("From", "")
+
+                found_attachment = False
+                for part in msg.walk():
+                    content_disposition = str(part.get("Content-Disposition", ""))
+                    content_type = part.get_content_type()
+                    filename = part.get_filename()
+
+                    if filename and ("attachment" in content_disposition or content_type == "application/pdf"):
+                        found_attachment = True
+                        file_bytes = part.get_payload(decode=True)
+
+                        if content_type == "application/pdf":
+                            text_content = _extract_text_from_pdf_bytes(file_bytes)
+                        else:
+                            text_content = f"[Archivo adjunto: {filename}, tipo: {content_type}]"
+
+                        extracted = _extract_invoice_data_with_ai(text_content, filename)
+
+                        with closing(get_db()) as conn:
+                            is_paid = extracted.get("is_paid", False)
+                            amount = extracted.get("amount")
+                            confidence = extracted.get("confidence", 0.0)
+                            needs_review = 1 if (confidence < 0.6 or not amount) else 0
+
+                            cur = conn.execute(
+                                """INSERT INTO vendor_invoices
+                                   (workspace_id, vendor_name, invoice_number, invoice_date, due_date,
+                                    amount, currency, status, source_email, source_subject,
+                                    raw_text, file_name, extracted_confidence, needs_review, processed_at, paid_at)
+                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                (workspace_id, extracted.get("vendor_name"), extracted.get("invoice_number"),
+                                 extracted.get("invoice_date"), extracted.get("due_date"),
+                                 amount, extracted.get("currency", "USD"),
+                                 "paid" if is_paid else "pending",
+                                 from_addr, subject, text_content[:3000], filename,
+                                 confidence, needs_review, now_iso,
+                                 now_iso if is_paid else None)
+                            )
+                            invoice_id = cur.lastrowid
+
+                            if is_paid and amount:
+                                ledger_cur = conn.execute(
+                                    """INSERT INTO ledger_entries
+                                       (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at)
+                                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                                    (workspace_id, "Expense",
+                                     f"Factura proveedor {extracted.get('vendor_name','')} — {extracted.get('invoice_number','')}",
+                                     "Proveedores", amount, extracted.get("currency", "USD"),
+                                     "Paid", now_iso[:10], now_iso)
+                                )
+                                conn.execute("UPDATE vendor_invoices SET ledger_entry_id = ? WHERE id = ?",
+                                             (ledger_cur.lastrowid, invoice_id))
+
+                            conn.commit()
+
+                        processed.append({
+                            "invoice_id": invoice_id, "vendor": extracted.get("vendor_name"),
+                            "amount": amount, "is_paid": is_paid, "needs_review": bool(needs_review),
+                        })
+
+                if not found_attachment:
+                    imap.store(msg_id, "-FLAGS", "\\Seen")
+
+            except Exception as msg_err:
+                errors.append(str(msg_err))
+                continue
+
+        imap.logout()
+
+        with closing(get_db()) as conn:
+            conn.execute("UPDATE email_inbox_config SET last_checked_at = ? WHERE workspace_id = ?",
+                         (now_iso, workspace_id))
+            conn.commit()
+
+        return {"ok": True, "processed": processed, "errors": errors, "count": len(processed)}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def send_whatsapp_text(to: str, text: str) -> dict[str, Any]:
@@ -1685,6 +1912,26 @@ def accounting_agent_close_deal(
             "UPDATE deals SET status = 'closed', closed_at = ? WHERE id = ?",
             (now, deal_id),
         )
+
+        # 3b. Deduct sold quantities from inventory stock automatically
+        try:
+            deal_items = json.loads(deal.get("items_json") or "[]")
+            for item in deal_items:
+                pid = item.get("product_id")
+                qty_sold = item.get("qty", 0)
+                if not pid or not qty_sold:
+                    continue
+                prod_row = conn.execute("SELECT id, stock FROM products WHERE id = ? AND workspace_id = ?", (pid, workspace_id)).fetchone()
+                if not prod_row:
+                    continue
+                new_stock = max(0, prod_row["stock"] - int(qty_sold))
+                conn.execute("UPDATE products SET stock = ?, updated_at = ? WHERE id = ?", (new_stock, now, pid))
+                conn.execute(
+                    "INSERT INTO stock_movements (workspace_id, product_id, delta, stock_after, movement_type, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (workspace_id, pid, -int(qty_sold), new_stock, "sale", f"Venta automatica - Deal {deal_id}", now),
+                )
+        except Exception as stock_err:
+            print(f"Stock deduction error for deal {deal_id}: {stock_err}")
 
         # 4. Commission event (value-based: 2% of deal value)
         COMMISSION_PCT = 0.02
@@ -5734,6 +5981,174 @@ def twilio_whatsapp_webhook():
 @app.get("/webhook/whatsapp")
 def twilio_whatsapp_webhook_verify():
     return ("OK", 200)
+
+
+
+# ── Vendor Invoices API ─────────────────────────────────────────────────────
+
+@app.get("/api/vendor-invoices")
+def api_vendor_invoices_list():
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    status_filter = request.args.get("status", "")
+    with closing(get_db()) as conn:
+        if status_filter:
+            rows = conn.execute(
+                "SELECT * FROM vendor_invoices WHERE workspace_id = ? AND status = ? ORDER BY processed_at DESC LIMIT 200",
+                (user["workspace_id"], status_filter)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM vendor_invoices WHERE workspace_id = ? ORDER BY processed_at DESC LIMIT 200",
+                (user["workspace_id"],)
+            ).fetchall()
+    invoices = [dict(r) for r in rows]
+    total_pending = sum(i["amount"] or 0 for i in invoices if i["status"] == "pending")
+    total_paid = sum(i["amount"] or 0 for i in invoices if i["status"] == "paid")
+    return jsonify({"ok": True, "invoices": invoices, "total_pending": total_pending, "total_paid": total_paid})
+
+
+@app.post("/api/vendor-invoices/<int:invoice_id>/mark-paid")
+def api_vendor_invoice_mark_paid(invoice_id: int):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    now = datetime.utcnow().isoformat()
+    with closing(get_db()) as conn:
+        inv = conn.execute("SELECT * FROM vendor_invoices WHERE id = ? AND workspace_id = ?",
+                            (invoice_id, user["workspace_id"])).fetchone()
+        if not inv:
+            return json_error("Invoice not found", 404)
+        inv = dict(inv)
+        if inv["status"] == "paid":
+            return jsonify({"ok": True, "message": "Ya estaba marcada como pagada"})
+
+        ledger_cur = conn.execute(
+            """INSERT INTO ledger_entries
+               (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (user["workspace_id"], "Expense",
+             f"Factura proveedor {inv.get('vendor_name','')} — {inv.get('invoice_number','')}",
+             "Proveedores", inv["amount"], inv["currency"], "Paid", now[:10], now)
+        )
+        conn.execute("UPDATE vendor_invoices SET status = 'paid', paid_at = ?, ledger_entry_id = ? WHERE id = ?",
+                     (now, ledger_cur.lastrowid, invoice_id))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.put("/api/vendor-invoices/<int:invoice_id>")
+def api_vendor_invoice_update(invoice_id: int):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    payload = request.get_json(force=True)
+    fields = {}
+    for k in ("vendor_name", "invoice_number", "invoice_date", "due_date", "amount", "currency"):
+        if k in payload:
+            fields[k] = payload[k]
+    if not fields:
+        return json_error("Nothing to update")
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [invoice_id, user["workspace_id"]]
+    with closing(get_db()) as conn:
+        conn.execute(f"UPDATE vendor_invoices SET {set_clause}, needs_review = 0 WHERE id = ? AND workspace_id = ?", values)
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/vendor-invoices/<int:invoice_id>")
+def api_vendor_invoice_delete(invoice_id: int):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    with closing(get_db()) as conn:
+        conn.execute("DELETE FROM vendor_invoices WHERE id = ? AND workspace_id = ?", (invoice_id, user["workspace_id"]))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/email-inbox/config")
+def api_email_inbox_get_config():
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    with closing(get_db()) as conn:
+        cfg = conn.execute("SELECT id, imap_host, imap_port, email_address, last_checked_at, active FROM email_inbox_config WHERE workspace_id = ?",
+                            (user["workspace_id"],)).fetchone()
+    return jsonify({"ok": True, "config": dict(cfg) if cfg else None})
+
+
+@app.post("/api/email-inbox/config")
+def api_email_inbox_save_config():
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    payload = request.get_json(force=True)
+    imap_host = payload.get("imap_host", "").strip()
+    email_address = payload.get("email_address", "").strip()
+    email_password = payload.get("email_password", "").strip()
+    imap_port = int(payload.get("imap_port", 993))
+
+    common_hosts = {
+        "gmail.com": "imap.gmail.com",
+        "outlook.com": "outlook.office365.com",
+        "hotmail.com": "outlook.office365.com",
+        "yahoo.com": "imap.mail.yahoo.com",
+    }
+    if not imap_host and "@" in email_address:
+        domain = email_address.split("@")[1].lower()
+        imap_host = common_hosts.get(domain, f"imap.{domain}")
+
+    if not email_address or not email_password or not imap_host:
+        return json_error("Faltan datos: email_address, email_password, imap_host")
+
+    now = datetime.utcnow().isoformat()
+    with closing(get_db()) as conn:
+        existing = conn.execute("SELECT id FROM email_inbox_config WHERE workspace_id = ?", (user["workspace_id"],)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE email_inbox_config SET imap_host=?, imap_port=?, email_address=?, email_password=?, active=1 WHERE workspace_id=?",
+                (imap_host, imap_port, email_address, email_password, user["workspace_id"])
+            )
+        else:
+            conn.execute(
+                "INSERT INTO email_inbox_config (workspace_id, imap_host, imap_port, email_address, email_password, active, created_at) VALUES (?,?,?,?,?,1,?)",
+                (user["workspace_id"], imap_host, imap_port, email_address, email_password, now)
+            )
+        conn.commit()
+    return jsonify({"ok": True, "imap_host": imap_host})
+
+
+@app.post("/api/email-inbox/check-now")
+def api_email_inbox_check_now():
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    result = check_vendor_invoice_inbox(user["workspace_id"])
+    return jsonify(result)
 
 
 if __name__ == "__main__":

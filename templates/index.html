@@ -95,6 +95,10 @@
       <button class="nav-item" data-page="finance">
         <span class="nav-icon">◈</span> Finance
       </button>
+      <button class="nav-item" data-page="vendor-invoices">
+        <span class="nav-icon">◻</span> Facturas Proveedores
+        <span class="nav-badge" id="badge-vendor-invoices"></span>
+      </button>
       <button class="nav-item" data-page="tasks">
         <span class="nav-icon">✦</span> Tasks
       </button>
@@ -420,6 +424,69 @@
             <div class="panel">
               <div class="panel-head"><h3>Alertas de inventario</h3></div>
               <div class="panel-body" id="inventory-alerts"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vendor Invoices (Cuentas por Pagar) -->
+      <div class="page" id="page-vendor-invoices">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Facturas de Proveedores</div>
+            <div class="page-sub">Carga automática por email · Cuentas por pagar</div>
+          </div>
+          <div class="header-actions">
+            <button class="ghost" id="btn-vi-config" onclick="toggleVendorInvoiceConfig()">⚙ Configurar mail</button>
+            <button class="primary" id="btn-vi-check" onclick="checkVendorInvoiceInboxNow()">↻ Revisar mail ahora</button>
+          </div>
+        </div>
+
+        <!-- Config panel (collapsed by default) -->
+        <div class="panel" id="vi-config-panel" style="display:none;margin-bottom:16px;">
+          <div class="panel-head"><h3>Conectar casilla de mail del negocio</h3></div>
+          <div class="panel-body">
+            <div id="vi-config-status" style="font-size:12px;color:var(--text3);margin-bottom:12px;"></div>
+            <label>Email del negocio (donde llegan las facturas de proveedores)</label>
+            <input id="vi-email-address" type="email" placeholder="compras@tunegocio.com">
+            <label>Contraseña de aplicación</label>
+            <input id="vi-email-password" type="password" placeholder="Contraseña o contraseña de app">
+            <div style="font-size:11px;color:var(--text3);margin-top:4px;margin-bottom:8px;">
+              Para Gmail necesitás generar una "contraseña de aplicación" en la configuración de seguridad de Google — no uses tu contraseña normal.
+            </div>
+            <label>Servidor IMAP (opcional, se detecta automático)</label>
+            <input id="vi-imap-host" placeholder="Ej: imap.gmail.com (se completa solo)">
+            <div class="form-actions"><button class="primary" onclick="saveVendorInvoiceConfig()">Guardar y conectar</button></div>
+          </div>
+        </div>
+
+        <!-- KPIs -->
+        <div id="vi-kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;"></div>
+
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Facturas recibidas</h3>
+              <div style="display:flex;gap:6px;">
+                <button class="ghost" onclick="filterVendorInvoices('')" style="font-size:11px;">Todas</button>
+                <button class="ghost" onclick="filterVendorInvoices('pending')" style="font-size:11px;">Pendientes</button>
+                <button class="ghost" onclick="filterVendorInvoices('paid')" style="font-size:11px;">Pagadas</button>
+              </div>
+            </div>
+            <div class="panel-body" style="overflow-y:auto;max-height:560px;" id="vendor-invoices-body">
+              <div class="empty"><div>Cargando facturas...</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="panel">
+              <div class="panel-head"><h3>Cómo funciona</h3></div>
+              <div class="panel-body" style="font-size:12px;color:var(--text2);line-height:1.7;">
+                <p style="margin-bottom:10px;">1. Conectá el mail del negocio donde te llegan las facturas de proveedores.</p>
+                <p style="margin-bottom:10px;">2. Cuando llega un mail con una factura en PDF adjunto, Banzai la lee automáticamente con IA.</p>
+                <p style="margin-bottom:10px;">3. Si el mail dice que está pagada, se imputa sola al libro contable como gasto.</p>
+                <p style="margin-bottom:10px;">4. Si no dice que está pagada, queda pendiente hasta que la marqués vos.</p>
+                <p>5. Si la IA no está segura de algún dato, la factura queda marcada para que la revises antes de confirmar.</p>
+              </div>
             </div>
           </div>
         </div>
@@ -893,5 +960,187 @@
 <div id="toast"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/app.js"></script>
+
+<script>
+// ── Vendor Invoices (Facturas de Proveedores) ───────────────────────────────
+(function() {
+  var viCurrentFilter = '';
+
+  function viToast(msg, isErr) {
+    var existing = document.getElementById('vi-toast');
+    if (existing) existing.remove();
+    var el = document.createElement('div');
+    el.id = 'vi-toast';
+    el.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;background:' + (isErr ? '#EF4444' : '#10B981') + ';color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.3);';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 3500);
+  }
+
+  async function viFetch(url, opts) {
+    opts = opts || {};
+    if (!opts.headers) opts.headers = {'Content-Type': 'application/json'};
+    var res = await fetch(url, opts);
+    var data = await res.json().catch(function(){ return {}; });
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Error de red');
+    return data;
+  }
+
+  function viFmt(v, cur) {
+    cur = cur || 'USD';
+    try {
+      return new Intl.NumberFormat('es-AR', {style:'currency', currency:cur, maximumFractionDigits:0}).format(v || 0);
+    } catch(e) { return (cur + ' ' + (v||0)); }
+  }
+
+  window.toggleVendorInvoiceConfig = function() {
+    var panel = document.getElementById('vi-config-panel');
+    var isHidden = panel.style.display === 'none';
+    panel.style.display = isHidden ? 'block' : 'none';
+    if (isHidden) loadVendorInvoiceConfig();
+  };
+
+  window.loadVendorInvoiceConfig = async function() {
+    try {
+      var r = await viFetch('/api/email-inbox/config');
+      var statusEl = document.getElementById('vi-config-status');
+      if (r.config) {
+        statusEl.innerHTML = '<span style="color:#10B981;">✓ Conectado: ' + r.config.email_address + '</span>' +
+          (r.config.last_checked_at ? ' · Última revisión: ' + new Date(r.config.last_checked_at).toLocaleString('es-AR') : ' · Todavía no se revisó');
+        document.getElementById('vi-email-address').value = r.config.email_address || '';
+        document.getElementById('vi-imap-host').value = r.config.imap_host || '';
+      } else {
+        statusEl.innerHTML = '<span style="color:#F59E0B;">⚠ Todavía no configuraste una casilla de mail</span>';
+      }
+    } catch(e) {
+      console.warn('Error loading vendor invoice config:', e.message);
+    }
+  };
+
+  window.saveVendorInvoiceConfig = async function() {
+    var email = document.getElementById('vi-email-address').value.trim();
+    var pass = document.getElementById('vi-email-password').value.trim();
+    var host = document.getElementById('vi-imap-host').value.trim();
+    if (!email || !pass) { viToast('Completá email y contraseña', true); return; }
+    try {
+      var r = await viFetch('/api/email-inbox/config', {
+        method: 'POST',
+        body: JSON.stringify({email_address: email, email_password: pass, imap_host: host})
+      });
+      viToast('Conectado a ' + r.imap_host + ' ✓');
+      document.getElementById('vi-email-password').value = '';
+      loadVendorInvoiceConfig();
+    } catch(e) {
+      viToast(e.message, true);
+    }
+  };
+
+  window.checkVendorInvoiceInboxNow = async function() {
+    var btn = document.getElementById('btn-vi-check');
+    var origText = btn.textContent;
+    btn.textContent = 'Revisando...';
+    btn.disabled = true;
+    try {
+      var r = await viFetch('/api/email-inbox/check-now', {method: 'POST'});
+      if (r.ok) {
+        viToast('Revisión completa: ' + r.count + ' factura(s) nueva(s) procesada(s) ✓');
+        loadVendorInvoices();
+      } else {
+        viToast(r.error || 'Error al revisar el mail', true);
+      }
+    } catch(e) {
+      viToast(e.message, true);
+    }
+    btn.textContent = origText;
+    btn.disabled = false;
+  };
+
+  window.filterVendorInvoices = function(status) {
+    viCurrentFilter = status;
+    loadVendorInvoices();
+  };
+
+  window.loadVendorInvoices = async function() {
+    var body = document.getElementById('vendor-invoices-body');
+    try {
+      var url = '/api/vendor-invoices' + (viCurrentFilter ? '?status=' + viCurrentFilter : '');
+      var r = await viFetch(url);
+      var invoices = r.invoices || [];
+
+      document.getElementById('vi-kpis').innerHTML = [
+        {l: 'Pendientes de pago', v: viFmt(r.total_pending), c: '#F59E0B'},
+        {l: 'Pagadas', v: viFmt(r.total_paid), c: '#10B981'},
+        {l: 'Total facturas', v: invoices.length, c: '#6366F1'},
+      ].map(function(k) {
+        return '<div class="panel" style="padding:14px 16px;">' +
+          '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:6px;">' + k.l + '</div>' +
+          '<div style="font-size:20px;font-weight:700;color:' + k.c + ';">' + k.v + '</div></div>';
+      }).join('');
+
+      if (!invoices.length) {
+        body.innerHTML = '<div class="empty"><div>Sin facturas todavía. Conectá tu mail y apretá "Revisar mail ahora".</div></div>';
+        return;
+      }
+
+      body.innerHTML = invoices.map(function(inv) {
+        var statusBadge = inv.status === 'paid'
+          ? '<span class="badge" style="background:rgba(16,185,129,.12);color:#10B981;">Pagada</span>'
+          : '<span class="badge" style="background:rgba(245,158,11,.12);color:#F59E0B;">Pendiente</span>';
+        var reviewBadge = inv.needs_review
+          ? '<span class="badge" style="background:rgba(239,68,68,.12);color:#EF4444;margin-left:4px;">Revisar</span>' : '';
+        return '<div class="row" style="padding:12px 0;border-bottom:1px solid var(--border);">' +
+          '<div style="flex:1;">' +
+            '<div style="font-weight:600;font-size:13px;">' + (inv.vendor_name || 'Proveedor sin identificar') + '</div>' +
+            '<div style="font-size:11px;color:var(--text3);">' +
+              (inv.invoice_number || 'sin numero') + ' · ' + (inv.invoice_date || '') +
+              (inv.file_name ? ' · ' + inv.file_name : '') +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="font-weight:700;font-size:14px;">' + viFmt(inv.amount, inv.currency) + '</span>' +
+            statusBadge + reviewBadge +
+            (inv.status !== 'paid' ? '<button class="ghost" style="font-size:11px;padding:4px 10px;" onclick="markVendorInvoicePaid(' + inv.id + ')">Marcar pagada</button>' : '') +
+            '<button class="ghost" style="font-size:11px;padding:4px 8px;" onclick="deleteVendorInvoice(' + inv.id + ')">✕</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } catch(e) {
+      body.innerHTML = '<div class="empty"><div>Error al cargar facturas: ' + e.message + '</div></div>';
+    }
+  };
+
+  window.markVendorInvoicePaid = async function(id) {
+    try {
+      await viFetch('/api/vendor-invoices/' + id + '/mark-paid', {method: 'POST'});
+      viToast('Factura marcada como pagada ✓');
+      loadVendorInvoices();
+    } catch(e) {
+      viToast(e.message, true);
+    }
+  };
+
+  window.deleteVendorInvoice = async function(id) {
+    if (!confirm('¿Eliminar esta factura del registro?')) return;
+    try {
+      await viFetch('/api/vendor-invoices/' + id, {method: 'DELETE'});
+      viToast('Factura eliminada');
+      loadVendorInvoices();
+    } catch(e) {
+      viToast(e.message, true);
+    }
+  };
+
+  // Hook into navigation: load data when this page becomes active
+  document.addEventListener('DOMContentLoaded', function() {
+    var navBtn = document.querySelector('[data-page="vendor-invoices"]');
+    if (navBtn) {
+      navBtn.addEventListener('click', function() {
+        loadVendorInvoices();
+      });
+    }
+  });
+})();
+</script>
+
 </body>
 </html>
