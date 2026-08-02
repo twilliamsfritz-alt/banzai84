@@ -461,14 +461,25 @@
         </div>
 
         <!-- KPIs -->
-        <div id="vi-kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;"></div>
+        <div id="vi-kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;"></div>
+
+        <!-- Search + view toggle -->
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-body" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 18px;">
+            <input id="vi-search-input" placeholder="Buscar por número de factura o proveedor..." style="flex:1;min-width:220px;" oninput="onVendorInvoiceSearch()">
+            <div style="display:flex;gap:6px;">
+              <button class="ghost active" id="vi-view-list-btn" onclick="setVendorInvoiceView('list')" style="font-size:11px;">Lista</button>
+              <button class="ghost" id="vi-view-vendor-btn" onclick="setVendorInvoiceView('vendor')" style="font-size:11px;">Por Proveedor</button>
+            </div>
+          </div>
+        </div>
 
         <div class="g2">
           <div class="panel">
             <div class="panel-head">
-              <h3>Facturas recibidas</h3>
-              <div style="display:flex;gap:6px;">
-                <button class="ghost" onclick="filterVendorInvoices('')" style="font-size:11px;">Todas</button>
+              <h3 id="vi-list-title">Facturas recibidas</h3>
+              <div style="display:flex;gap:6px;" id="vi-status-filters">
+                <button class="ghost active" onclick="filterVendorInvoices('')" style="font-size:11px;">Todas</button>
                 <button class="ghost" onclick="filterVendorInvoices('pending')" style="font-size:11px;">Pendientes</button>
                 <button class="ghost" onclick="filterVendorInvoices('paid')" style="font-size:11px;">Pagadas</button>
               </div>
@@ -485,9 +496,23 @@
                 <p style="margin-bottom:10px;">2. Cuando llega un mail con una factura en PDF adjunto, Banzai la lee automáticamente con IA.</p>
                 <p style="margin-bottom:10px;">3. Si el mail dice que está pagada, se imputa sola al libro contable como gasto.</p>
                 <p style="margin-bottom:10px;">4. Si no dice que está pagada, queda pendiente hasta que la marqués vos.</p>
-                <p>5. Si la IA no está segura de algún dato, la factura queda marcada para que la revises antes de confirmar.</p>
+                <p style="margin-bottom:10px;">5. Si la IA no está segura de algún dato, la factura queda marcada para que la revises antes de confirmar.</p>
+                <p>6. Si el mismo proveedor manda la misma factura dos veces, Banzai la detecta y no la duplica.</p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vendor Invoice Detail Modal -->
+      <div id="vi-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this) closeVendorInvoiceDetail()">
+        <div class="panel" style="max-width:520px;width:92%;max-height:85vh;overflow-y:auto;">
+          <div class="panel-head">
+            <h3>Detalle de factura</h3>
+            <button class="ghost" style="font-size:11px;" onclick="closeVendorInvoiceDetail()">✕ Cerrar</button>
+          </div>
+          <div class="panel-body" id="vi-detail-body">
+            <div class="empty"><div>Cargando...</div></div>
           </div>
         </div>
       </div>
@@ -965,6 +990,9 @@
 // ── Vendor Invoices (Facturas de Proveedores) ───────────────────────────────
 (function() {
   var viCurrentFilter = '';
+  var viCurrentSearch = '';
+  var viCurrentView = 'list';
+  var viSearchDebounce = null;
 
   function viToast(msg, isErr) {
     var existing = document.getElementById('vi-toast');
@@ -1043,7 +1071,11 @@
     try {
       var r = await viFetch('/api/email-inbox/check-now', {method: 'POST'});
       if (r.ok) {
-        viToast('Revisión completa: ' + r.count + ' factura(s) nueva(s) procesada(s) ✓');
+        var dupCount = (r.processed || []).filter(function(p){ return p.duplicate; }).length;
+        var newCount = r.count - dupCount;
+        var msg = 'Revisión completa: ' + newCount + ' factura(s) nueva(s)';
+        if (dupCount > 0) msg += ', ' + dupCount + ' duplicada(s) omitida(s)';
+        viToast(msg + ' ✓');
         loadVendorInvoices();
       } else {
         viToast(r.error || 'Error al revisar el mail', true);
@@ -1057,13 +1089,43 @@
 
   window.filterVendorInvoices = function(status) {
     viCurrentFilter = status;
+    document.querySelectorAll('#vi-status-filters .ghost').forEach(function(b){ b.classList.remove('active'); });
+    if (window.event && window.event.target) window.event.target.classList.add('active');
     loadVendorInvoices();
+  };
+
+  window.onVendorInvoiceSearch = function() {
+    clearTimeout(viSearchDebounce);
+    viSearchDebounce = setTimeout(function() {
+      viCurrentSearch = document.getElementById('vi-search-input').value.trim();
+      if (viCurrentView === 'list') {
+        loadVendorInvoices();
+      } else {
+        loadVendorInvoicesByVendor();
+      }
+    }, 350);
+  };
+
+  window.setVendorInvoiceView = function(view) {
+    viCurrentView = view;
+    document.getElementById('vi-view-list-btn').classList.toggle('active', view === 'list');
+    document.getElementById('vi-view-vendor-btn').classList.toggle('active', view === 'vendor');
+    document.getElementById('vi-status-filters').style.display = view === 'list' ? 'flex' : 'none';
+    document.getElementById('vi-list-title').textContent = view === 'list' ? 'Facturas recibidas' : 'Proveedores';
+    if (view === 'list') {
+      loadVendorInvoices();
+    } else {
+      loadVendorInvoicesByVendor();
+    }
   };
 
   window.loadVendorInvoices = async function() {
     var body = document.getElementById('vendor-invoices-body');
     try {
-      var url = '/api/vendor-invoices' + (viCurrentFilter ? '?status=' + viCurrentFilter : '');
+      var params = [];
+      if (viCurrentFilter) params.push('status=' + viCurrentFilter);
+      if (viCurrentSearch) params.push('q=' + encodeURIComponent(viCurrentSearch));
+      var url = '/api/vendor-invoices' + (params.length ? '?' + params.join('&') : '');
       var r = await viFetch(url);
       var invoices = r.invoices || [];
 
@@ -1078,7 +1140,7 @@
       }).join('');
 
       if (!invoices.length) {
-        body.innerHTML = '<div class="empty"><div>Sin facturas todavía. Conectá tu mail y apretá "Revisar mail ahora".</div></div>';
+        body.innerHTML = '<div class="empty"><div>' + (viCurrentSearch ? 'Sin resultados para "' + viCurrentSearch + '"' : 'Sin facturas todavía. Conectá tu mail y apretá "Revisar mail ahora".') + '</div></div>';
         return;
       }
 
@@ -1088,7 +1150,7 @@
           : '<span class="badge" style="background:rgba(245,158,11,.12);color:#F59E0B;">Pendiente</span>';
         var reviewBadge = inv.needs_review
           ? '<span class="badge" style="background:rgba(239,68,68,.12);color:#EF4444;margin-left:4px;">Revisar</span>' : '';
-        return '<div class="row" style="padding:12px 0;border-bottom:1px solid var(--border);">' +
+        return '<div class="row" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openVendorInvoiceDetail(' + inv.id + ')">' +
           '<div style="flex:1;">' +
             '<div style="font-weight:600;font-size:13px;">' + (inv.vendor_name || 'Proveedor sin identificar') + '</div>' +
             '<div style="font-size:11px;color:var(--text3);">' +
@@ -1096,7 +1158,7 @@
               (inv.file_name ? ' · ' + inv.file_name : '') +
             '</div>' +
           '</div>' +
-          '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation()">' +
             '<span style="font-weight:700;font-size:14px;">' + viFmt(inv.amount, inv.currency) + '</span>' +
             statusBadge + reviewBadge +
             (inv.status !== 'paid' ? '<button class="ghost" style="font-size:11px;padding:4px 10px;" onclick="markVendorInvoicePaid(' + inv.id + ')">Marcar pagada</button>' : '') +
@@ -1109,11 +1171,103 @@
     }
   };
 
+  window.loadVendorInvoicesByVendor = async function() {
+    var body = document.getElementById('vendor-invoices-body');
+    try {
+      var r = await viFetch('/api/vendor-invoices/by-vendor');
+      var vendors = r.vendors || [];
+
+      if (viCurrentSearch) {
+        var q = viCurrentSearch.toLowerCase();
+        vendors = vendors.filter(function(v) { return (v.vendor_name || '').toLowerCase().indexOf(q) !== -1; });
+      }
+
+      var totalPending = vendors.reduce(function(s,v){ return s + (v.pending_total || 0); }, 0);
+      var totalPaid = vendors.reduce(function(s,v){ return s + (v.paid_total || 0); }, 0);
+
+      document.getElementById('vi-kpis').innerHTML = [
+        {l: 'Pendientes de pago', v: viFmt(totalPending), c: '#F59E0B'},
+        {l: 'Pagadas', v: viFmt(totalPaid), c: '#10B981'},
+        {l: 'Proveedores', v: vendors.length, c: '#6366F1'},
+      ].map(function(k) {
+        return '<div class="panel" style="padding:14px 16px;">' +
+          '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:6px;">' + k.l + '</div>' +
+          '<div style="font-size:20px;font-weight:700;color:' + k.c + ';">' + k.v + '</div></div>';
+      }).join('');
+
+      if (!vendors.length) {
+        body.innerHTML = '<div class="empty"><div>Sin proveedores todavía.</div></div>';
+        return;
+      }
+
+      body.innerHTML = vendors.map(function(v) {
+        var vname = (v.vendor_name || '').replace(/'/g, "\\'");
+        return '<div class="row" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="filterByVendorName(\'' + vname + '\')">' +
+          '<div style="flex:1;">' +
+            '<div style="font-weight:600;font-size:13px;">' + (v.vendor_name || '—') + '</div>' +
+            '<div style="font-size:11px;color:var(--text3);">' + v.invoice_count + ' factura(s) · última: ' + (v.last_invoice_at ? new Date(v.last_invoice_at).toLocaleDateString('es-AR') : '—') + '</div>' +
+          '</div>' +
+          '<div style="text-align:right;">' +
+            '<div style="font-size:13px;font-weight:700;color:#F59E0B;">' + viFmt(v.pending_total) + ' pend.</div>' +
+            '<div style="font-size:11px;color:#10B981;">' + viFmt(v.paid_total) + ' pagado</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } catch(e) {
+      body.innerHTML = '<div class="empty"><div>Error al cargar proveedores: ' + e.message + '</div></div>';
+    }
+  };
+
+  window.filterByVendorName = function(vendorName) {
+    setVendorInvoiceView('list');
+    document.getElementById('vi-search-input').value = vendorName;
+    viCurrentSearch = vendorName;
+    setTimeout(loadVendorInvoices, 50);
+  };
+
+  window.openVendorInvoiceDetail = async function(id) {
+    var modal = document.getElementById('vi-detail-modal');
+    var body = document.getElementById('vi-detail-body');
+    modal.style.display = 'flex';
+    body.innerHTML = '<div class="empty"><div>Cargando...</div></div>';
+    try {
+      var r = await viFetch('/api/vendor-invoices/' + id);
+      var inv = r.invoice;
+      var statusColor = inv.status === 'paid' ? '#10B981' : '#F59E0B';
+      var statusText = inv.status === 'paid' ? 'Pagada' : 'Pendiente';
+      body.innerHTML =
+        '<div style="margin-bottom:16px;">' +
+          '<span class="badge" style="background:' + statusColor + '22;color:' + statusColor + ';font-size:12px;">' + statusText + '</span>' +
+          (inv.needs_review ? '<span class="badge" style="background:#EF444422;color:#EF4444;margin-left:6px;font-size:12px;">Revisar datos</span>' : '') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Proveedor</label><div style="font-size:14px;font-weight:600;">' + (inv.vendor_name || '—') + '</div></div>' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">N° Factura</label><div style="font-size:14px;font-weight:600;">' + (inv.invoice_number || '—') + '</div></div>' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Monto</label><div style="font-size:16px;font-weight:700;">' + viFmt(inv.amount, inv.currency) + '</div></div>' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Fecha factura</label><div style="font-size:14px;">' + (inv.invoice_date || '—') + '</div></div>' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Vencimiento</label><div style="font-size:14px;">' + (inv.due_date || '—') + '</div></div>' +
+          '<div><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Archivo</label><div style="font-size:14px;">' + (inv.file_name || '—') + '</div></div>' +
+        '</div>' +
+        (inv.source_email ? '<div style="margin-bottom:12px;"><label style="font-size:10px;color:var(--text3);text-transform:uppercase;">Recibido de</label><div style="font-size:12px;color:var(--text2);">' + inv.source_email + '</div></div>' : '') +
+        (r.ledger_entry ? '<div class="panel" style="margin-top:12px;padding:12px;background:rgba(16,185,129,.06);"><div style="font-size:11px;color:#10B981;font-weight:600;">✓ Imputada al libro contable</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">' + r.ledger_entry.concept + '</div></div>' : '') +
+        '<div style="display:flex;gap:8px;margin-top:20px;">' +
+          (inv.status !== 'paid' ? '<button class="primary" onclick="markVendorInvoicePaid(' + inv.id + ');closeVendorInvoiceDetail();">Marcar como pagada</button>' : '') +
+          '<button class="ghost" onclick="deleteVendorInvoice(' + inv.id + ');closeVendorInvoiceDetail();">Eliminar</button>' +
+        '</div>';
+    } catch(e) {
+      body.innerHTML = '<div class="empty"><div>Error: ' + e.message + '</div></div>';
+    }
+  };
+
+  window.closeVendorInvoiceDetail = function() {
+    document.getElementById('vi-detail-modal').style.display = 'none';
+  };
+
   window.markVendorInvoicePaid = async function(id) {
     try {
       await viFetch('/api/vendor-invoices/' + id + '/mark-paid', {method: 'POST'});
       viToast('Factura marcada como pagada ✓');
-      loadVendorInvoices();
+      if (viCurrentView === 'list') loadVendorInvoices(); else loadVendorInvoicesByVendor();
     } catch(e) {
       viToast(e.message, true);
     }
@@ -1124,13 +1278,12 @@
     try {
       await viFetch('/api/vendor-invoices/' + id, {method: 'DELETE'});
       viToast('Factura eliminada');
-      loadVendorInvoices();
+      if (viCurrentView === 'list') loadVendorInvoices(); else loadVendorInvoicesByVendor();
     } catch(e) {
       viToast(e.message, true);
     }
   };
 
-  // Hook into navigation: load data when this page becomes active
   document.addEventListener('DOMContentLoaded', function() {
     var navBtn = document.querySelector('[data-page="vendor-invoices"]');
     if (navBtn) {

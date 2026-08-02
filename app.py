@@ -885,6 +885,12 @@ def init_db(force_reset: bool = False) -> None:
                 pass
         else:
             conn.executescript(SCHEMA)
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_vendor_invoice_dedup ON vendor_invoices(workspace_id, vendor_name, invoice_number) WHERE vendor_name IS NOT NULL AND invoice_number IS NOT NULL"
+            )
+        except Exception:
+            pass
             conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", ("schema_version", APP_VERSION))
             conn.commit()
             existing = conn.execute("SELECT COUNT(*) AS count FROM workspaces").fetchone()["count"]
@@ -1352,6 +1358,7 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
             return {"ok": False, "error": "No se pudo buscar mensajes"}
 
         ids = message_ids[0].split()
+        ids = list(reversed(ids))  # process most recent unread messages first
         now_iso = datetime.utcnow().isoformat()
 
         for msg_id in ids[:20]:
@@ -1391,6 +1398,22 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
                             amount = extracted.get("amount")
                             confidence = extracted.get("confidence", 0.0)
                             needs_review = 1 if (confidence < 0.6 or not amount) else 0
+
+                            # Duplicate detection: same vendor + same invoice number already exists
+                            inv_num = extracted.get("invoice_number")
+                            vendor_nm = extracted.get("vendor_name")
+                            if inv_num and vendor_nm:
+                                dup = conn.execute(
+                                    "SELECT id FROM vendor_invoices WHERE workspace_id = ? AND invoice_number = ? AND vendor_name = ?",
+                                    (workspace_id, inv_num, vendor_nm)
+                                ).fetchone()
+                                if dup:
+                                    processed.append({
+                                        "invoice_id": dup["id"], "vendor": vendor_nm,
+                                        "amount": amount, "is_paid": is_paid,
+                                        "duplicate": True, "skipped": True,
+                                    })
+                                    continue
 
                             cur = conn.execute(
                                 """INSERT INTO vendor_invoices
@@ -5995,21 +6018,86 @@ def api_vendor_invoices_list():
     if not user_can(user, "see_finances"):
         return json_error("Permission denied", 403)
     status_filter = request.args.get("status", "")
+    search_q = request.args.get("q", "").strip()
+    vendor_filter = request.args.get("vendor", "").strip()
+
+    query = "SELECT * FROM vendor_invoices WHERE workspace_id = ?"
+    params = [user["workspace_id"]]
+
+    if status_filter:
+        query += " AND status = ?"
+        params.append(status_filter)
+
+    if vendor_filter:
+        query += " AND vendor_name = ?"
+        params.append(vendor_filter)
+
+    if search_q:
+        query += " AND (invoice_number LIKE ? OR vendor_name LIKE ?)"
+        like_q = f"%{search_q}%"
+        params.extend([like_q, like_q])
+
+    query += " ORDER BY processed_at DESC LIMIT 300"
+
     with closing(get_db()) as conn:
-        if status_filter:
-            rows = conn.execute(
-                "SELECT * FROM vendor_invoices WHERE workspace_id = ? AND status = ? ORDER BY processed_at DESC LIMIT 200",
-                (user["workspace_id"], status_filter)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM vendor_invoices WHERE workspace_id = ? ORDER BY processed_at DESC LIMIT 200",
-                (user["workspace_id"],)
-            ).fetchall()
+        rows = conn.execute(query, params).fetchall()
+
     invoices = [dict(r) for r in rows]
     total_pending = sum(i["amount"] or 0 for i in invoices if i["status"] == "pending")
     total_paid = sum(i["amount"] or 0 for i in invoices if i["status"] == "paid")
     return jsonify({"ok": True, "invoices": invoices, "total_pending": total_pending, "total_paid": total_paid})
+
+
+@app.get("/api/vendor-invoices/by-vendor")
+def api_vendor_invoices_by_vendor():
+    """Group invoices by vendor for the vendor-centric view."""
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    with closing(get_db()) as conn:
+        rows = conn.execute(
+            """SELECT vendor_name,
+                      COUNT(*) as invoice_count,
+                      SUM(CASE WHEN status='pending' THEN amount ELSE 0 END) as pending_total,
+                      SUM(CASE WHEN status='paid' THEN amount ELSE 0 END) as paid_total,
+                      MAX(processed_at) as last_invoice_at
+               FROM vendor_invoices
+               WHERE workspace_id = ? AND vendor_name IS NOT NULL
+               GROUP BY vendor_name
+               ORDER BY last_invoice_at DESC""",
+            (user["workspace_id"],)
+        ).fetchall()
+    vendors = [dict(r) for r in rows]
+    return jsonify({"ok": True, "vendors": vendors})
+
+
+@app.get("/api/vendor-invoices/<int:invoice_id>")
+def api_vendor_invoice_detail(invoice_id: int):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    with closing(get_db()) as conn:
+        inv = conn.execute(
+            "SELECT * FROM vendor_invoices WHERE id = ? AND workspace_id = ?",
+            (invoice_id, user["workspace_id"])
+        ).fetchone()
+        if not inv:
+            return json_error("Invoice not found", 404)
+        inv = dict(inv)
+        ledger_entry = None
+        if inv.get("ledger_entry_id"):
+            led = conn.execute(
+                "SELECT * FROM ledger_entries WHERE id = ?", (inv["ledger_entry_id"],)
+            ).fetchone()
+            if led:
+                ledger_entry = dict(led)
+    return jsonify({"ok": True, "invoice": inv, "ledger_entry": ledger_entry})
 
 
 @app.post("/api/vendor-invoices/<int:invoice_id>/mark-paid")
