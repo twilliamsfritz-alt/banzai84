@@ -462,6 +462,8 @@ CREATE TABLE IF NOT EXISTS vendor_invoices (
     source_subject TEXT,
     raw_text TEXT,
     file_name TEXT,
+    file_base64 TEXT,
+    file_mime_type TEXT DEFAULT 'application/pdf',
     ledger_entry_id INTEGER,
     extracted_confidence REAL DEFAULT 0,
     needs_review INTEGER DEFAULT 0,
@@ -908,6 +910,8 @@ def auto_setup_if_needed():
                 "ALTER TABLE workspaces ADD COLUMN trial_ends_at TEXT",
                 "ALTER TABLE workspaces ADD COLUMN plan_expires_at TEXT",
                 "ALTER TABLE conversations ADD COLUMN customer_phone TEXT",
+                "ALTER TABLE vendor_invoices ADD COLUMN file_base64 TEXT",
+                "ALTER TABLE vendor_invoices ADD COLUMN file_mime_type TEXT DEFAULT 'application/pdf'",
             ]:
                 try:
                     conn.execute(col_def)
@@ -1391,6 +1395,14 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
                         else:
                             text_content = f"[Archivo adjunto: {filename}, tipo: {content_type}]"
 
+                        file_b64 = None
+                        try:
+                            import base64 as _b64mod
+                            if file_bytes and len(file_bytes) < 8_000_000:  # keep DB row size reasonable, max ~8MB
+                                file_b64 = _b64mod.b64encode(file_bytes).decode("ascii")
+                        except Exception:
+                            file_b64 = None
+
                         extracted = _extract_invoice_data_with_ai(text_content, filename)
 
                         with closing(get_db()) as conn:
@@ -1419,13 +1431,15 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
                                 """INSERT INTO vendor_invoices
                                    (workspace_id, vendor_name, invoice_number, invoice_date, due_date,
                                     amount, currency, status, source_email, source_subject,
-                                    raw_text, file_name, extracted_confidence, needs_review, processed_at, paid_at)
-                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                    raw_text, file_name, file_base64, file_mime_type,
+                                    extracted_confidence, needs_review, processed_at, paid_at)
+                                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                                 (workspace_id, extracted.get("vendor_name"), extracted.get("invoice_number"),
                                  extracted.get("invoice_date"), extracted.get("due_date"),
                                  amount, extracted.get("currency", "USD"),
                                  "paid" if is_paid else "pending",
                                  from_addr, subject, text_content[:3000], filename,
+                                 file_b64, content_type,
                                  confidence, needs_review, now_iso,
                                  now_iso if is_paid else None)
                             )
@@ -6048,6 +6062,130 @@ def api_vendor_invoices_list():
     return jsonify({"ok": True, "invoices": invoices, "total_pending": total_pending, "total_paid": total_paid})
 
 
+@app.get("/reportes/cuentas-por-pagar")
+def vendor_invoices_printable_report():
+    """Printable/PDF-ready Accounts Payable report."""
+    try:
+        user = require_auth()
+    except PermissionError:
+        return redirect("/")
+    if not user_can(user, "see_finances"):
+        return "No autorizado", 403
+
+    with closing(get_db()) as conn:
+        ws = conn.execute("SELECT name, currency FROM workspaces WHERE id = ?", (user["workspace_id"],)).fetchone()
+        pending_rows = conn.execute(
+            """SELECT * FROM vendor_invoices
+               WHERE workspace_id = ? AND status = 'pending'
+               ORDER BY vendor_name, due_date""",
+            (user["workspace_id"],)
+        ).fetchall()
+
+    pending = [dict(r) for r in pending_rows]
+    workspace_name = ws["name"] if ws else "Negocio"
+    currency = ws["currency"] if ws else "USD"
+
+    # Group by vendor
+    by_vendor = {}
+    for inv in pending:
+        vname = inv.get("vendor_name") or "Proveedor sin identificar"
+        by_vendor.setdefault(vname, []).append(inv)
+
+    grand_total = sum(inv.get("amount") or 0 for inv in pending)
+
+    def fmt_money(v):
+        try:
+            return f"{currency} {v:,.2f}"
+        except Exception:
+            return f"{currency} {v}"
+
+    vendor_sections = []
+    for vname, invs in sorted(by_vendor.items(), key=lambda kv: -sum(i.get('amount') or 0 for i in kv[1])):
+        vendor_total = sum(inv.get("amount") or 0 for inv in invs)
+        rows_html = "".join(
+            f"<tr>"
+            f"<td>{inv.get('invoice_number') or '—'}</td>"
+            f"<td>{inv.get('invoice_date') or '—'}</td>"
+            f"<td>{inv.get('due_date') or '—'}</td>"
+            f"<td class='amt'>{fmt_money(inv.get('amount') or 0)}</td>"
+            f"</tr>"
+            for inv in invs
+        )
+        vendor_sections.append(f"""
+        <div class="vendor-block">
+          <div class="vendor-header">
+            <span class="vendor-name">{vname}</span>
+            <span class="vendor-total">{fmt_money(vendor_total)}</span>
+          </div>
+          <table>
+            <thead><tr><th>N° Factura</th><th>Fecha</th><th>Vencimiento</th><th class="amt">Monto</th></tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+        </div>""")
+
+    vendor_html = "".join(vendor_sections) if vendor_sections else '<p class="empty-msg">No hay facturas pendientes de pago.</p>'
+
+    return render_template_string("""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Cuentas por Pagar — {{ workspace_name }}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #1F2937; margin: 0; padding: 32px; background: #fff; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #6366F1; padding-bottom: 16px; margin-bottom: 24px; }
+  .header h1 { font-size: 22px; margin: 0 0 4px; color: #6366F1; }
+  .header .sub { font-size: 12px; color: #6B7280; }
+  .header .date { font-size: 11px; color: #9CA3AF; text-align: right; }
+  .summary-box { background: #EEF2FF; border-radius: 10px; padding: 18px 24px; margin-bottom: 28px; display: flex; justify-content: space-between; align-items: center; }
+  .summary-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #6366F1; font-weight: 700; }
+  .summary-box .value { font-size: 28px; font-weight: 800; color: #4F46E5; }
+  .vendor-block { margin-bottom: 22px; page-break-inside: avoid; }
+  .vendor-header { display: flex; justify-content: space-between; align-items: center; background: #F3F4F6; padding: 8px 12px; border-radius: 6px 6px 0 0; }
+  .vendor-name { font-weight: 700; font-size: 13px; }
+  .vendor-total { font-weight: 700; font-size: 13px; color: #F59E0B; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 6px 12px; border-bottom: 2px solid #E5E7EB; color: #6B7280; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td { padding: 7px 12px; border-bottom: 1px solid #F3F4F6; }
+  .amt { text-align: right; }
+  .empty-msg { color: #6B7280; font-style: italic; padding: 20px; text-align: center; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #E5E7EB; font-size: 10px; color: #9CA3AF; text-align: center; }
+  .print-btn { position: fixed; top: 20px; right: 20px; background: #6366F1; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  @media print {
+    .print-btn { display: none; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+  <button class="print-btn" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+  <div class="header">
+    <div>
+      <h1>Cuentas por Pagar</h1>
+      <div class="sub">{{ workspace_name }}</div>
+    </div>
+    <div class="date">Generado el {{ today }}</div>
+  </div>
+
+  <div class="summary-box">
+    <div>
+      <div class="label">Total adeudado a proveedores</div>
+    </div>
+    <div class="value">{{ grand_total_fmt }}</div>
+  </div>
+
+  {{ vendor_html | safe }}
+
+  <div class="footer">Banzai84 — Reporte generado automáticamente</div>
+</body>
+</html>""",
+        workspace_name=workspace_name,
+        today=datetime.utcnow().strftime("%d/%m/%Y %H:%M"),
+        grand_total_fmt=fmt_money(grand_total),
+        vendor_html=vendor_html,
+    )
+
+
 @app.get("/api/vendor-invoices/by-vendor")
 def api_vendor_invoices_by_vendor():
     """Group invoices by vendor for the vendor-centric view."""
@@ -6090,6 +6228,9 @@ def api_vendor_invoice_detail(invoice_id: int):
         if not inv:
             return json_error("Invoice not found", 404)
         inv = dict(inv)
+        has_file = bool(inv.get("file_base64"))
+        inv.pop("file_base64", None)  # don't ship the huge base64 blob in the JSON detail
+        inv["has_file"] = has_file
         ledger_entry = None
         if inv.get("ledger_entry_id"):
             led = conn.execute(
@@ -6098,6 +6239,32 @@ def api_vendor_invoice_detail(invoice_id: int):
             if led:
                 ledger_entry = dict(led)
     return jsonify({"ok": True, "invoice": inv, "ledger_entry": ledger_entry})
+
+
+@app.get("/api/vendor-invoices/<int:invoice_id>/file")
+def api_vendor_invoice_download_file(invoice_id: int):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    if not user_can(user, "see_finances"):
+        return json_error("Permission denied", 403)
+    with closing(get_db()) as conn:
+        inv = conn.execute(
+            "SELECT file_base64, file_mime_type, file_name FROM vendor_invoices WHERE id = ? AND workspace_id = ?",
+            (invoice_id, user["workspace_id"])
+        ).fetchone()
+    if not inv or not inv["file_base64"]:
+        return json_error("Archivo no disponible para esta factura", 404)
+    import base64 as _b64mod
+    import io as _iomod
+    file_bytes = _b64mod.b64decode(inv["file_base64"])
+    return send_file(
+        _iomod.BytesIO(file_bytes),
+        mimetype=inv["file_mime_type"] or "application/pdf",
+        as_attachment=False,
+        download_name=inv["file_name"] or f"factura_{invoice_id}.pdf",
+    )
 
 
 @app.post("/api/vendor-invoices/<int:invoice_id>/mark-paid")
