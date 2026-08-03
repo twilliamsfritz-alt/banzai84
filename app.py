@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, render_template_string, request, send_file, send_from_directory, session
+from flask import Flask, Response, jsonify, redirect, render_template, render_template_string, request, send_file, send_from_directory, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -6184,7 +6184,34 @@ def manifest():
 
 @app.get("/service-worker.js")
 def service_worker():
-    return send_from_directory(app.static_folder, "service-worker.js", mimetype="application/javascript")
+    """Kill-switch service worker: unregisters itself and wipes ALL caches on activation.
+    This replaces whatever old service worker is stuck in users' browsers serving stale
+    HTML/JS despite the server having the correct up-to-date version — a real incident
+    that happened in production: an old SW (registered weeks ago) kept serving a frozen
+    snapshot of the app indefinitely, invisible from the server side, surviving normal
+    cache-busting and even 'Disable cache' in devtools."""
+    sw_js = """
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.registration.unregister();
+      const clientsList = await self.clients.matchAll({ type: 'window' });
+      clientsList.forEach((client) => client.navigate(client.url));
+    })()
+  );
+});
+"""
+    resp = Response(sw_js, mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 init_db()
