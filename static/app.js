@@ -955,8 +955,7 @@ function closeBulkModal(){$('bulk-modal').style.display='none';}
 async function processBulkCSV() {
   const csv=$('bulk-csv').value.trim();
   if(!csv){toast('Pegá el CSV','err');return;}
-  const lines=csv.split('
-').map(l=>l.trim()).filter(Boolean);
+  const lines=csv.split('\n').map(l=>l.trim()).filter(Boolean);
   const headers=lines[0].split(',').map(h=>h.trim().toLowerCase());
   const products=[];
   for(let i=1;i<lines.length;i++){
