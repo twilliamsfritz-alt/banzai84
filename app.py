@@ -221,6 +221,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     trial_ends_at TEXT,
     plan_expires_at TEXT,
     whatsapp_number TEXT,
+    fixed_industry TEXT,
+    auto_outreach_enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -605,6 +607,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     total_revenue REAL NOT NULL DEFAULT 0,
     conversation_count INTEGER NOT NULL DEFAULT 0,
     last_contact_at TEXT,
+    last_auto_contacted_at TEXT,
     source TEXT,
     created_at TEXT NOT NULL
 );
@@ -952,6 +955,9 @@ def auto_setup_if_needed():
                 "ALTER TABLE vendor_invoices ADD COLUMN file_mime_type TEXT DEFAULT 'application/pdf'",
                 "ALTER TABLE workspaces ADD COLUMN whatsapp_number TEXT",
                 "ALTER TABLE ledger_entries ADD COLUMN source TEXT DEFAULT 'manual'",
+                "ALTER TABLE workspaces ADD COLUMN fixed_industry TEXT",
+                "ALTER TABLE workspaces ADD COLUMN auto_outreach_enabled INTEGER DEFAULT 0",
+                "ALTER TABLE contacts ADD COLUMN last_auto_contacted_at TEXT",
             ]:
                 try:
                     conn.execute(col_def)
@@ -1184,6 +1190,153 @@ def get_playbooks(workspace_id: int) -> dict:
     return merged
 
 
+def get_effective_industry(workspace_id: int, text: str, products: list, knowledge: list, playbooks: dict | None = None) -> str:
+    """Returns the workspace's manually-pinned rubro if the owner set one in Settings,
+    otherwise falls back to automatic keyword detection. A pinned rubro is more reliable
+    for the AI outreach/reply prompts than guessing from a short message every time."""
+    try:
+        with closing(get_db()) as conn:
+            row = conn.execute("SELECT fixed_industry FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+            if row and row["fixed_industry"]:
+                pb = playbooks or INDUSTRY_PLAYBOOKS
+                if row["fixed_industry"] in pb:
+                    return row["fixed_industry"]
+    except Exception:
+        pass
+    return detect_industry(text, products, knowledge, playbooks)
+
+
+def run_weekly_outreach_for_workspace(workspace_id: int) -> dict:
+    """Automatically messages contacts that are due for their periodic touch (roughly
+    1-2 times a week — enforced by a minimum 3.5 day gap since their last automatic
+    message, so it never feels spammy). Each message is personalized by the AI using
+    the contact's real purchase history plus the business's rubro and current stock —
+    never a copy-pasted blast. Only runs for workspaces that explicitly opted in via
+    Settings (auto_outreach_enabled) and have a WhatsApp number configured."""
+    sent = 0
+    skipped = 0
+    errors = []
+    try:
+        with closing(get_db()) as conn:
+            ws = conn.execute(
+                "SELECT id, whatsapp_number, auto_outreach_enabled, currency, language FROM workspaces WHERE id=?",
+                (workspace_id,)
+            ).fetchone()
+            if not ws or not ws["auto_outreach_enabled"] or not ws["whatsapp_number"]:
+                return {"sent": 0, "skipped": 0, "errors": [], "reason": "not_enabled_or_no_number"}
+
+            cutoff = (datetime.utcnow() - timedelta(days=3.5)).isoformat()
+            due_contacts = conn.execute(
+                """SELECT id, name, phone, notes FROM contacts
+                   WHERE workspace_id=? AND phone IS NOT NULL AND phone != ''
+                   AND (last_auto_contacted_at IS NULL OR last_auto_contacted_at < ?)
+                   ORDER BY last_auto_contacted_at ASC NULLS FIRST
+                   LIMIT 40""",
+                (workspace_id, cutoff)
+            ).fetchall()
+
+        for c in due_contacts:
+            try:
+                purchase_summary = build_contact_purchase_summary(workspace_id, c["name"])
+                combined_notes = (c["notes"] or "")
+                if purchase_summary:
+                    combined_notes = (combined_notes + ". " + purchase_summary).strip(". ")
+
+                brief = (
+                    "Ofrecele algo relacionado a lo que compro antes o a productos relacionados con su interes, "
+                    "usando solo productos que esten en stock ahora. Si no compro nada antes, presentate brevemente "
+                    "y contale una promo o producto destacado del rubro."
+                )
+                message = generate_outreach_message(
+                    workspace_id, c["name"], combined_notes, brief,
+                    ws["language"] or "es", ws["currency"] or "USD"
+                )
+
+                send_whatsapp_text(c["phone"], message, workspace_id=workspace_id)
+                now = datetime.utcnow().isoformat()
+
+                with closing(get_db()) as conn:
+                    conn.execute("UPDATE contacts SET last_auto_contacted_at=?, last_contact_at=? WHERE id=?",
+                                 (now, now, c["id"]))
+
+                    conv_row = conn.execute(
+                        "SELECT id FROM conversations WHERE workspace_id=? AND customer_phone=? AND status='open' ORDER BY id DESC LIMIT 1",
+                        (workspace_id, c["phone"])
+                    ).fetchone()
+                    if conv_row:
+                        conv_id = conv_row["id"]
+                        conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+                    else:
+                        cur = conn.execute(
+                            "INSERT INTO conversations (workspace_id,customer_name,customer_phone,channel,status,country,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                            (workspace_id, c["name"], c["phone"], "whatsapp", "open", "AR", now, now)
+                        )
+                        conv_id = cur.lastrowid
+                    conn.execute(
+                        "INSERT INTO messages (conversation_id,role,text,created_at) VALUES (?,?,?,?)",
+                        (conv_id, "assistant", message, now)
+                    )
+                    conn.commit()
+
+                sent += 1
+            except Exception as contact_err:
+                errors.append(f"{c['name']}: {str(contact_err)[:150]}")
+
+        skipped = 0
+        return {"sent": sent, "skipped": skipped, "errors": errors[:20]}
+    except Exception as e:
+        return {"sent": sent, "skipped": skipped, "errors": [str(e)[:200]]}
+
+
+def run_weekly_outreach_all_workspaces() -> dict:
+    """Runs the periodic outreach for every workspace that has it enabled. Called by the
+    background scheduler once a day — the per-contact 3.5-day gate naturally produces
+    a 1-2x/week cadence per contact without needing a more complex weekly-only trigger."""
+    total_sent = 0
+    results = {}
+    try:
+        with closing(get_db()) as conn:
+            workspace_ids = [r["id"] for r in conn.execute(
+                "SELECT id FROM workspaces WHERE auto_outreach_enabled=1 AND whatsapp_number IS NOT NULL"
+            ).fetchall()]
+        for wid in workspace_ids:
+            r = run_weekly_outreach_for_workspace(wid)
+            results[wid] = r
+            total_sent += r.get("sent", 0)
+    except Exception as e:
+        results["error"] = str(e)[:200]
+    return {"total_sent": total_sent, "by_workspace": results}
+
+
+def build_contact_purchase_summary(workspace_id: int, contact_name: str) -> str:
+    """Builds a short natural-language summary of what a specific contact has bought
+    before, so outreach messages can reference real purchase history instead of being
+    generic. Used by the weekly automatic outreach to personalize based on interest."""
+    try:
+        with closing(get_db()) as conn:
+            deals = conn.execute(
+                "SELECT items_json, negotiated_total, closed_at FROM deals WHERE workspace_id=? AND customer_name=? AND status='closed' ORDER BY closed_at DESC LIMIT 5",
+                (workspace_id, contact_name)
+            ).fetchall()
+        if not deals:
+            return ""
+        product_names = []
+        for d in deals:
+            try:
+                items = json.loads(d["items_json"] or "[]")
+                for it in items:
+                    nm = it.get("name")
+                    if nm and nm not in product_names:
+                        product_names.append(nm)
+            except Exception:
+                continue
+        if not product_names:
+            return ""
+        return "Compro antes: " + ", ".join(product_names[:5])
+    except Exception:
+        return ""
+
+
 def detect_industry(text: str, products: list, knowledge: list, playbooks: dict | None = None) -> str:
     """Detect industry from context clues."""
     combined = (text + " ".join(p.get("category","") for p in products) + " ".join(a.get("title","") for a in knowledge)).lower()
@@ -1216,7 +1369,7 @@ def generate_outreach_message(workspace_id: int, contact_name: str, contact_note
             playbooks = get_playbooks(workspace_id)
 
         combined_text = f"{brief} {contact_notes or ''}"
-        industry = detect_industry(combined_text, products, [], playbooks)
+        industry = get_effective_industry(workspace_id, combined_text, products, [], playbooks)
         playbook = playbooks.get(industry, playbooks.get("default", {}))
 
         products_ctx = json.dumps([{"name": p["name"], "price": p["price"], "stock": p["stock"]} for p in products], ensure_ascii=False) if products else "SIN PRODUCTOS CARGADOS - no inventes productos ni precios"
@@ -1276,7 +1429,7 @@ def generate_ai_reply(workspace_id: int, text: str, language: str, currency: str
             ).fetchall()]
 
         playbooks = get_playbooks(workspace_id)
-        industry = detect_industry(text, products, knowledge, playbooks)
+        industry = get_effective_industry(workspace_id, text, products, knowledge, playbooks)
         playbook = playbooks.get(industry, playbooks.get("default", INDUSTRY_PLAYBOOKS["default"]))
         client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -1596,7 +1749,15 @@ def send_whatsapp_text(to: str, text: str, workspace_id: int | None = None) -> d
         except Exception:
             pass
     if twilio_sid and twilio_token:
-        to_fmt = to if to.startswith("whatsapp:") else f"whatsapp:{to}"
+        # Normalize to E.164: Twilio silently fails to deliver (but still returns
+        # a "queued" success) if the number is missing the leading + — this bit us
+        # in production, so we defensively add it here instead of trusting the caller.
+        # Only prepend '+', never strip digits — stripping could corrupt a valid number.
+        clean_to = to.replace("whatsapp:", "").strip()
+        clean_to = _re_mod.sub(r"[^\d+]", "", clean_to)  # strip spaces/dashes/parens, keep digits and +
+        if not clean_to.startswith("+"):
+            clean_to = "+" + clean_to
+        to_fmt = f"whatsapp:{clean_to}"
         url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json"
         resp = requests.post(
             url,
@@ -5853,6 +6014,85 @@ def api_integrations_status():
     return jsonify({"ok": True, "integrations": integration_status()})
 
 
+@app.get("/api/rubros")
+def api_rubros_list():
+    """List all available rubros (industries) for the Settings dropdown."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    rubros = [{"slug": slug, "name": data.get("name", slug.replace("_", " ").title())}
+              for slug, data in INDUSTRY_PLAYBOOKS.items() if slug != "default"]
+    rubros.sort(key=lambda x: x["name"])
+    with closing(get_db()) as conn:
+        row = conn.execute("SELECT fixed_industry FROM workspaces WHERE id=?", (user["workspace_id"],)).fetchone()
+    return jsonify({"ok": True, "rubros": rubros, "current": row["fixed_industry"] if row else None})
+
+
+@app.put("/api/workspace/rubro")
+def api_workspace_rubro_set():
+    """Pin the workspace's industry so the Sales Agent and outreach always use it,
+    instead of re-guessing from each message."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    payload = request.get_json(force=True)
+    slug = (payload.get("slug") or "").strip()
+    if slug and slug not in INDUSTRY_PLAYBOOKS:
+        return json_error("Rubro invalido")
+    with closing(get_db()) as conn:
+        conn.execute("UPDATE workspaces SET fixed_industry=? WHERE id=?", (slug or None, user["workspace_id"]))
+        conn.commit()
+    return jsonify({"ok": True, "fixed_industry": slug or None})
+
+
+@app.get("/api/workspace/outreach-settings")
+def api_outreach_settings_get():
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    with closing(get_db()) as conn:
+        row = conn.execute(
+            "SELECT auto_outreach_enabled, whatsapp_number FROM workspaces WHERE id=?",
+            (user["workspace_id"],)
+        ).fetchone()
+    return jsonify({
+        "ok": True,
+        "enabled": bool(row["auto_outreach_enabled"]) if row else False,
+        "whatsapp_configured": bool(row["whatsapp_number"]) if row else False,
+    })
+
+
+@app.put("/api/workspace/outreach-settings")
+def api_outreach_settings_set():
+    """Turn the automatic weekly-cadence outreach on/off. Off by default — the owner
+    has to explicitly opt in, since this sends real WhatsApp messages to contacts
+    without a human reviewing each one."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    payload = request.get_json(force=True)
+    enabled = bool(payload.get("enabled", False))
+    with closing(get_db()) as conn:
+        ws = conn.execute("SELECT whatsapp_number FROM workspaces WHERE id=?", (user["workspace_id"],)).fetchone()
+        if enabled and not (ws and ws["whatsapp_number"]):
+            return json_error("Configura primero tu numero de WhatsApp antes de activar el outreach automatico")
+        conn.execute("UPDATE workspaces SET auto_outreach_enabled=? WHERE id=?", (1 if enabled else 0, user["workspace_id"]))
+        conn.commit()
+    return jsonify({"ok": True, "enabled": enabled})
+
+
+@app.post("/api/workspace/outreach-run-now")
+def api_outreach_run_now():
+    """Manually trigger the outreach engine right now, for testing without waiting
+    for the scheduled run or the 3.5-day per-contact gate."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    result = run_weekly_outreach_for_workspace(user["workspace_id"])
+    return jsonify({"ok": True, **result})
+
+
 @app.get("/api/workspace/whatsapp-number")
 def api_workspace_whatsapp_get():
     try: user = require_auth()
@@ -6216,6 +6456,39 @@ self.addEventListener('activate', (event) => {
 
 init_db()
 auto_setup_if_needed()
+
+# ── Background scheduler: automatic weekly-cadence outreach ────────────────
+# Runs inside the same worker process (deployment uses --workers 1, so this is
+# safe from duplicate-run issues). Guarded by a module-level flag so it can't
+# accidentally start twice if this module gets imported more than once.
+_scheduler_started = False
+
+
+def _start_outreach_scheduler():
+    global _scheduler_started
+    if _scheduler_started:
+        return
+    if os.environ.get("DISABLE_OUTREACH_SCHEDULER") == "1":
+        return
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(
+            run_weekly_outreach_all_workspaces,
+            "interval",
+            hours=24,
+            next_run_time=datetime.utcnow() + timedelta(minutes=2),
+            id="weekly_outreach",
+            replace_existing=True,
+        )
+        scheduler.start()
+        _scheduler_started = True
+        print("Outreach scheduler started — runs every 24h, first run in ~2 minutes")
+    except Exception as e:
+        print(f"Could not start outreach scheduler: {e}")
+
+
+_start_outreach_scheduler()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1010,13 +1010,46 @@
               <div class="panel-head"><h3>Integrations</h3></div>
               <div class="panel-body" id="integrations-list"></div>
             </div>
-            <div class="panel">
+            <div class="panel" style="margin-bottom:14px;">
               <div class="panel-head"><h3>Response profile</h3></div>
               <div class="panel-body">
                 <label>Style</label><input id="profile-style">
                 <label>Personality notes</label><textarea id="profile-notes"></textarea>
                 <label>Forbidden tone</label><textarea id="profile-forbidden"></textarea>
                 <div class="form-actions"><button class="primary" id="save-profile">Save profile</button></div>
+              </div>
+            </div>
+
+            <!-- Rubro del negocio -->
+            <div class="panel" style="margin-bottom:14px;">
+              <div class="panel-head"><h3>Rubro del negocio</h3></div>
+              <div class="panel-body">
+                <p style="font-size:12px;color:var(--text2);margin-bottom:10px;">
+                  Elegí el rubro de tu negocio para que el Sales Agent siempre use las tácticas correctas, en vez de adivinar por cada mensaje.
+                </p>
+                <label>Buscar rubro</label>
+                <input id="rubro-search" placeholder="Escribí para filtrar (ej: ferreteria, veterinaria...)" oninput="filterRubroList()">
+                <div id="rubro-list" style="max-height:220px;overflow-y:auto;margin-top:8px;border:1px solid var(--border2);border-radius:8px;"></div>
+                <div id="rubro-current" style="margin-top:10px;font-size:12px;color:var(--text2);"></div>
+              </div>
+            </div>
+
+            <!-- Outreach automatico -->
+            <div class="panel">
+              <div class="panel-head"><h3>Contacto automático semanal</h3></div>
+              <div class="panel-body">
+                <p style="font-size:12px;color:var(--text2);margin-bottom:10px;">
+                  Cuando está activo, Banzai le escribe a cada contacto con teléfono cargado 1-2 veces por semana, con un mensaje que la IA arma en base a lo que compró antes y lo que hay en stock. Nunca manda el mismo mensaje a todos.
+                </p>
+                <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;cursor:pointer;">
+                  <input type="checkbox" id="outreach-toggle" style="width:auto;" onchange="toggleOutreach()">
+                  Activar contacto automático
+                </label>
+                <div id="outreach-status" style="font-size:11px;color:var(--text3);margin-top:8px;"></div>
+                <div class="form-actions" style="margin-top:10px;">
+                  <button class="secondary" onclick="runOutreachNow()">▶ Probar ahora (sin esperar)</button>
+                </div>
+                <div id="outreach-run-result" style="margin-top:10px;font-size:12px;"></div>
               </div>
             </div>
           </div>
@@ -1443,6 +1476,148 @@
     btn.disabled = false;
     btn.textContent = origText;
   };
+})();
+</script>
+
+<script>
+// ── Rubro selector + Automatic outreach settings ────────────────────────────
+(function() {
+  var allRubros = [];
+  var currentRubro = null;
+
+  function rsToast(msg, isErr) {
+    var existing = document.getElementById('rs-toast');
+    if (existing) existing.remove();
+    var el = document.createElement('div');
+    el.id = 'rs-toast';
+    el.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;background:' + (isErr ? '#EF4444' : '#10B981') + ';color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.3);';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 3500);
+  }
+
+  async function rsFetch(url, opts) {
+    opts = opts || {};
+    if (!opts.headers) opts.headers = {'Content-Type': 'application/json'};
+    var res = await fetch(url, opts);
+    var data = await res.json().catch(function(){ return {}; });
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Error de red');
+    return data;
+  }
+
+  async function loadRubroSettings() {
+    try {
+      var r = await rsFetch('/api/rubros');
+      allRubros = r.rubros || [];
+      currentRubro = r.current;
+      renderRubroList(allRubros);
+      updateCurrentRubroLabel();
+    } catch(e) {
+      console.warn('Error loading rubros:', e.message);
+    }
+  }
+
+  function updateCurrentRubroLabel() {
+    var el = document.getElementById('rubro-current');
+    if (!el) return;
+    if (currentRubro) {
+      var match = allRubros.find(function(r){ return r.slug === currentRubro; });
+      el.innerHTML = '<span style="color:#10B981;">✓ Rubro actual: <strong>' + (match ? match.name : currentRubro) + '</strong></span>';
+    } else {
+      el.innerHTML = '<span style="color:#F59E0B;">⚠ Sin rubro fijo — el sistema detecta automáticamente de cada mensaje</span>';
+    }
+  }
+
+  function renderRubroList(list) {
+    var el = document.getElementById('rubro-list');
+    if (!el) return;
+    if (!list.length) {
+      el.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--text3);">Sin resultados</div>';
+      return;
+    }
+    el.innerHTML = list.map(function(r) {
+      var isActive = r.slug === currentRubro;
+      return '<div onclick="selectRubro(\'' + r.slug + '\')" style="padding:9px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);' +
+        (isActive ? 'background:rgba(99,102,241,.1);color:#6366F1;font-weight:600;' : '') + '" ' +
+        'onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'' + (isActive ? 'rgba(99,102,241,.1)' : '') + '\'">' +
+        (isActive ? '✓ ' : '') + r.name +
+        '</div>';
+    }).join('');
+  }
+
+  window.filterRubroList = function() {
+    var q = (document.getElementById('rubro-search').value || '').toLowerCase();
+    var filtered = allRubros.filter(function(r) { return r.name.toLowerCase().indexOf(q) !== -1; });
+    renderRubroList(filtered);
+  };
+
+  window.selectRubro = async function(slug) {
+    try {
+      await rsFetch('/api/workspace/rubro', {method: 'PUT', body: JSON.stringify({slug: slug})});
+      currentRubro = slug;
+      updateCurrentRubroLabel();
+      renderRubroList(allRubros);
+      rsToast('Rubro actualizado ✓');
+    } catch(e) {
+      rsToast(e.message, true);
+    }
+  };
+
+  async function loadOutreachSettings() {
+    try {
+      var r = await rsFetch('/api/workspace/outreach-settings');
+      var toggle = document.getElementById('outreach-toggle');
+      var status = document.getElementById('outreach-status');
+      if (toggle) toggle.checked = r.enabled;
+      if (status) {
+        if (!r.whatsapp_configured) {
+          status.innerHTML = '<span style="color:#F59E0B;">⚠ Configurá primero tu número de WhatsApp en Facturas Proveedores o vía soporte</span>';
+        } else if (r.enabled) {
+          status.innerHTML = '<span style="color:#10B981;">✓ Activo — contactando automáticamente a tus clientes</span>';
+        } else {
+          status.innerHTML = '<span style="color:var(--text3);">Desactivado</span>';
+        }
+      }
+    } catch(e) {
+      console.warn('Error loading outreach settings:', e.message);
+    }
+  }
+
+  window.toggleOutreach = async function() {
+    var checked = document.getElementById('outreach-toggle').checked;
+    try {
+      await rsFetch('/api/workspace/outreach-settings', {method: 'PUT', body: JSON.stringify({enabled: checked})});
+      rsToast(checked ? 'Contacto automático activado ✓' : 'Contacto automático desactivado');
+      await loadOutreachSettings();
+    } catch(e) {
+      document.getElementById('outreach-toggle').checked = !checked;
+      rsToast(e.message, true);
+    }
+  };
+
+  window.runOutreachNow = async function() {
+    var resultEl = document.getElementById('outreach-run-result');
+    resultEl.innerHTML = 'Ejecutando...';
+    try {
+      var r = await rsFetch('/api/workspace/outreach-run-now', {method: 'POST'});
+      resultEl.innerHTML = '<span style="color:#10B981;">✓ ' + r.sent + ' mensaje(s) enviado(s)</span>' +
+        (r.errors && r.errors.length ? '<div style="color:#EF4444;margin-top:4px;">' + r.errors.length + ' error(es)</div>' : '');
+      rsToast('Ejecutado ✓');
+    } catch(e) {
+      resultEl.innerHTML = '<span style="color:#EF4444;">✗ ' + e.message + '</span>';
+      rsToast(e.message, true);
+    }
+  };
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var navBtn = document.querySelector('[data-page="settings"]');
+    if (navBtn) {
+      navBtn.addEventListener('click', function() {
+        loadRubroSettings();
+        loadOutreachSettings();
+      });
+    }
+  });
 })();
 </script>
 </body>
