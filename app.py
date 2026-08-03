@@ -1197,6 +1197,60 @@ def detect_industry(text: str, products: list, knowledge: list, playbooks: dict 
     return "default"
 
 
+def generate_outreach_message(workspace_id: int, contact_name: str, contact_notes: str, brief: str, language: str, currency: str) -> str:
+    """Draft a personalized, proactive sales outreach message for a specific contact —
+    used by Broadcast AI mode to write a unique pitch per person instead of blasting
+    the same template to everyone. Uses the business's real products, rubro tactics,
+    and whatever notes exist about this specific contact."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key or OpenAI is None:
+        # Fallback: simple template personalization, still better than nothing
+        return f"Hola {contact_name}! {brief}".strip()
+
+    try:
+        with closing(get_db()) as conn:
+            products = [dict(r) for r in conn.execute(
+                "SELECT name, price, stock FROM products WHERE workspace_id = ? AND active=1 ORDER BY demand_score DESC LIMIT 15",
+                (workspace_id,),
+            ).fetchall()]
+            playbooks = get_playbooks(workspace_id)
+
+        combined_text = f"{brief} {contact_notes or ''}"
+        industry = detect_industry(combined_text, products, [], playbooks)
+        playbook = playbooks.get(industry, playbooks.get("default", {}))
+
+        products_ctx = json.dumps([{"name": p["name"], "price": p["price"], "stock": p["stock"]} for p in products], ensure_ascii=False) if products else "SIN PRODUCTOS CARGADOS - no inventes productos ni precios"
+
+        client = OpenAI(api_key=api_key)
+        sys_msg = (
+            "Sos un vendedor experto escribiendo el PRIMER mensaje de WhatsApp a un cliente, de forma proactiva "
+            "(el cliente no te escribio primero, vos le escribis a el). El objetivo es generar interes real, no sonar "
+            "a spam generico. Reglas estrictas:\n"
+            "1. NUNCA inventes productos, precios o descuentos que no esten en la lista de productos disponibles.\n"
+            "2. Usa el nombre del contacto de forma natural, no fuerces el saludo.\n"
+            "3. Se breve: maximo 3-4 oraciones, es un WhatsApp, no un email.\n"
+            "4. Si hay notas sobre este contacto especifico, usalas para personalizar genuinamente (que producto le interesa, que rubro tiene).\n"
+            "5. Terminá con una pregunta simple que invite a responder, no un cierre de venta agresivo.\n"
+            f"6. Tacticas del rubro detectado ({industry}): {', '.join(playbook.get('tactics', [])[:3])}\n"
+        )
+        user_msg = (
+            f"Contacto: {contact_name}\n"
+            f"Notas sobre este contacto: {contact_notes or 'ninguna'}\n"
+            f"Instrucción del dueño del negocio sobre qué comunicar: {brief}\n"
+            f"Productos disponibles: {products_ctx}\n"
+            f"Moneda: {currency}\n\n"
+            "Escribí el mensaje de WhatsApp."
+        )
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
+            max_tokens=250, temperature=0.7,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception:
+        return f"Hola {contact_name}! {brief}".strip()
+
+
 def generate_ai_reply(workspace_id: int, text: str, language: str, currency: str) -> dict[str, Any]:
     status = integration_status()
     fallback = natural_reply(workspace_id, text, language, currency)
@@ -5605,40 +5659,97 @@ def api_advisor_insights():
 
 @app.post("/api/broadcast")
 def api_broadcast():
-    """Send a message to multiple contacts via WhatsApp or as internal notification."""
+    """Proactively reach out to a list of contacts via WhatsApp — this is the outbound
+    counterpart to the Sales Agent's inbound negotiation. Two modes:
+    - ai_generate=False (default): sends the exact 'message' text, with {{name}} personalization.
+    - ai_generate=True: 'message' is treated as a brief/instruction, and the AI drafts a
+      unique, personalized pitch per contact using the business's real products and rubro.
+    Every send creates/updates a real conversation + Pipeline card, so the outreach is
+    trackable in Sales Inbox and Pipeline exactly like an inbound lead would be — not a
+    one-off blast that vanishes after sending."""
     try: user = require_auth()
     except PermissionError: return json_error("Not authenticated", 401)
     p = request.get_json(force=True)
     message = (p.get("message") or "").strip()
     recipients = p.get("recipients", [])
     channel = p.get("channel", "internal")
+    ai_generate = bool(p.get("ai_generate", False))
     if not message: return json_error("message required")
     if not recipients: return json_error("recipients required")
+    if len(recipients) > 200: return json_error("Maximo 200 destinatarios por broadcast")
     now = datetime.utcnow().isoformat()
     wid = user["workspace_id"]
     sent = failed = 0
+    results = []
     with closing(get_db()) as conn:
+        pipeline_row = conn.execute("SELECT id FROM pipelines WHERE workspace_id=? ORDER BY id LIMIT 1", (wid,)).fetchone()
+        if not pipeline_row:
+            pcur = conn.execute(
+                "INSERT INTO pipelines (workspace_id,name,stages_json,created_at) VALUES (?,?,?,?)",
+                (wid, "Pipeline principal", '["Nuevo","Contactado","Demo","Propuesta","Negociación","Cerrado","Perdido"]', now)
+            )
+            pipeline_id = pcur.lastrowid
+        else:
+            pipeline_id = pipeline_row["id"]
+
         for rec in recipients[:200]:
-            name = rec.get("name","Contact")
-            phone = rec.get("phone","")
-            # Personalize message
-            personalized = message.replace("{{name}}", name).replace("{{nombre}}", name)
+            name = sanitize_text(rec.get("name", "Contact"), 100)
+            phone = sanitize_text(rec.get("phone", ""), 30)
+            notes = sanitize_text(rec.get("notes", ""), 500)
+
+            if ai_generate:
+                personalized = generate_outreach_message(wid, name, notes, message, user["language"], user["currency"])
+            else:
+                personalized = message.replace("{{name}}", name).replace("{{nombre}}", name)
+
             if channel == "whatsapp" and phone:
                 try:
-                    send_whatsapp_text(phone, personalized, workspace_id=user["workspace_id"])
+                    send_whatsapp_text(phone, personalized, workspace_id=wid)
+
+                    # Create/update a real conversation so the outreach is trackable
+                    conv_row = conn.execute(
+                        "SELECT id FROM conversations WHERE workspace_id=? AND customer_phone=? AND status='open' ORDER BY id DESC LIMIT 1",
+                        (wid, phone)
+                    ).fetchone()
+                    if conv_row:
+                        conv_id = conv_row["id"]
+                        conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+                    else:
+                        cur = conn.execute(
+                            "INSERT INTO conversations (workspace_id,customer_name,customer_phone,channel,status,country,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                            (wid, name, phone, "whatsapp", "open", "AR", now, now)
+                        )
+                        conv_id = cur.lastrowid
+                    conn.execute(
+                        "INSERT INTO messages (conversation_id,role,text,created_at) VALUES (?,?,?,?)",
+                        (conv_id, "assistant", personalized, now)
+                    )
+
+                    existing_card = conn.execute(
+                        "SELECT id FROM pipeline_cards WHERE workspace_id=? AND conversation_id=?", (wid, conv_id)
+                    ).fetchone()
+                    if not existing_card:
+                        conn.execute(
+                            "INSERT INTO pipeline_cards (workspace_id,pipeline_id,conversation_id,customer_name,deal_value,currency,stage,probability,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                            (wid, pipeline_id, conv_id, name, 0, user["currency"], "Contactado", 30, notes, now, now)
+                        )
+
                     sent += 1
-                except Exception:
+                    results.append({"name": name, "phone": phone, "status": "sent", "message": personalized})
+                except Exception as send_err:
                     failed += 1
+                    results.append({"name": name, "phone": phone, "status": "failed", "error": str(send_err)[:200]})
             else:
-                # Internal notification / trace
                 conn.execute(
                     "INSERT INTO traces (workspace_id,flow,customer,status,detail,created_at) VALUES (?,?,?,?,?,?)",
                     (wid, "broadcast", name, "sent", personalized[:300], now)
                 )
                 sent += 1
+                results.append({"name": name, "status": "sent", "message": personalized})
         conn.commit()
     return jsonify({"ok": True, "sent": sent, "failed": failed,
-                    "total": len(recipients), "channel": channel})
+                    "total": len(recipients), "channel": channel, "ai_generate": ai_generate,
+                    "results": results[:200]})
 
 
 @app.get("/api/broadcast/history")
@@ -6690,12 +6801,12 @@ def twilio_whatsapp_webhook():
         with closing(get_db()) as conn:
             conn.execute(
                 "INSERT INTO messages (conversation_id,role,text,created_at) VALUES (?,?,?,?)",
-                (conversation_id, "agent", reply_text, datetime.utcnow().isoformat())
+                (conversation_id, "assistant", reply_text, datetime.utcnow().isoformat())
             )
             conn.commit()
 
         try:
-            send_whatsapp_text(from_number, reply_text)
+            send_whatsapp_text(from_number, reply_text, workspace_id=workspace_id)
         except Exception as send_err:
             print(f"WhatsApp send error: {send_err}")
 
