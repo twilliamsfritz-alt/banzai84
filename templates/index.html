@@ -921,24 +921,50 @@
       <!-- Broadcast -->
       <div class="page" id="page-broadcast">
         <div class="page-header">
-          <div><div class="page-title">Broadcast</div><div class="page-sub">Mensajes masivos personalizados · WhatsApp · Notificaciones</div></div>
+          <div><div class="page-title">Broadcast</div><div class="page-sub">Contactá clientes de forma proactiva · WhatsApp · IA personalizada</div></div>
         </div>
+
+        <!-- Mode toggle -->
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-body" style="display:flex;gap:10px;padding:14px 18px;">
+            <button class="ghost active" id="bc-mode-fixed-btn" onclick="setBroadcastMode('fixed')" style="flex:1;">✉ Mensaje fijo</button>
+            <button class="ghost" id="bc-mode-ai-btn" onclick="setBroadcastMode('ai')" style="flex:1;">✦ Propuesta personalizada por IA</button>
+          </div>
+        </div>
+
         <div class="g2">
           <div class="panel">
-            <div class="panel-head"><h3>Enviar broadcast</h3></div>
+            <div class="panel-head"><h3 id="bc-panel-title">Enviar broadcast</h3></div>
             <div class="panel-body">
-              <label>Mensaje (usá {{name}} o {{nombre}} para personalizar)</label>
-              <textarea id="bc-message" style="min-height:100px;" placeholder="Hola {{name}}, te escribimos desde Banzai para…"></textarea>
-              <div id="bc-char-count" style="font-size:11px;color:var(--text3);margin-top:4px;">0 caracteres</div>
-              <label>Canal</label>
-              <select id="bc-channel">
-                <option value="internal">Notificación interna (sin WhatsApp)</option>
-                <option value="whatsapp">WhatsApp (requiere integración activa)</option>
-              </select>
-              <label>Destinatarios (uno por línea: nombre|telefono)</label>
-              <textarea id="bc-recipients" style="min-height:80px;font-family:monospace;font-size:12px;" placeholder="Carlos García|5491112345678&#10;Laura Martínez|5491198765432"></textarea>
-              <div id="bc-result" style="display:none;margin-top:10px;padding:10px;border-radius:var(--r-sm);font-size:12px;"></div>
-              <div class="form-actions"><button class="primary" id="btn-broadcast" onclick="sendBroadcast()">📡 Enviar broadcast</button></div>
+              <!-- Fixed mode (original) -->
+              <div id="bc-fixed-fields">
+                <label>Mensaje (usá {{name}} o {{nombre}} para personalizar)</label>
+                <textarea id="bc-message" style="min-height:100px;" placeholder="Hola {{name}}, te escribimos desde Banzai para…"></textarea>
+                <div id="bc-char-count" style="font-size:11px;color:var(--text3);margin-top:4px;">0 caracteres</div>
+                <label>Canal</label>
+                <select id="bc-channel">
+                  <option value="internal">Notificación interna (sin WhatsApp)</option>
+                  <option value="whatsapp">WhatsApp (requiere integración activa)</option>
+                </select>
+                <label>Destinatarios (uno por línea: nombre|telefono)</label>
+                <textarea id="bc-recipients" style="min-height:80px;font-family:monospace;font-size:12px;" placeholder="Carlos García|5491112345678&#10;Laura Martínez|5491198765432"></textarea>
+                <div id="bc-result" style="display:none;margin-top:10px;padding:10px;border-radius:var(--r-sm);font-size:12px;"></div>
+                <div class="form-actions"><button class="primary" id="btn-broadcast" onclick="sendBroadcast()">📡 Enviar broadcast</button></div>
+              </div>
+
+              <!-- AI mode (new) -->
+              <div id="bc-ai-fields" style="display:none;">
+                <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.6;">
+                  La IA escribe un mensaje <strong>distinto para cada contacto</strong>, usando tu inventario real y las notas que cargues sobre cada uno. No manda el mismo texto copiado a todos.
+                </div>
+                <label>¿Qué querés comunicar? (instrucción para la IA, no el mensaje final)</label>
+                <textarea id="bc-ai-brief" style="min-height:80px;" placeholder="Ej: Ofrecele el combo de pinturas de la temporada con envío gratis"></textarea>
+                <label>Destinatarios (uno por línea: nombre|telefono|notas opcionales)</label>
+                <textarea id="bc-ai-recipients" style="min-height:100px;font-family:monospace;font-size:12px;" placeholder="Carlos García|5491112345678|Compró tornillos el mes pasado&#10;Laura Martínez|5491198765432|Preguntó por pintura interior"></textarea>
+                <div id="bc-ai-result" style="display:none;margin-top:10px;padding:10px;border-radius:var(--r-sm);font-size:12px;"></div>
+                <div id="bc-ai-preview" style="margin-top:12px;"></div>
+                <div class="form-actions"><button class="primary" id="btn-broadcast-ai" onclick="sendBroadcastAI()">✦ Generar y enviar con IA</button></div>
+              </div>
             </div>
           </div>
           <div class="panel">
@@ -1301,5 +1327,104 @@
 })();
 </script>
 
+
+<script>
+// ── Broadcast AI mode (personalized outreach) ───────────────────────────────
+(function() {
+  function bcaiToast(msg, isErr) {
+    var existing = document.getElementById('bcai-toast');
+    if (existing) existing.remove();
+    var el = document.createElement('div');
+    el.id = 'bcai-toast';
+    el.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;background:' + (isErr ? '#EF4444' : '#10B981') + ';color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.3);';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 4000);
+  }
+
+  window.setBroadcastMode = function(mode) {
+    var isAi = mode === 'ai';
+    document.getElementById('bc-mode-fixed-btn').classList.toggle('active', !isAi);
+    document.getElementById('bc-mode-ai-btn').classList.toggle('active', isAi);
+    document.getElementById('bc-fixed-fields').style.display = isAi ? 'none' : 'block';
+    document.getElementById('bc-ai-fields').style.display = isAi ? 'block' : 'none';
+    document.getElementById('bc-panel-title').textContent = isAi ? 'Propuesta personalizada por IA' : 'Enviar broadcast';
+  };
+
+  function parseAiRecipients(raw) {
+    return raw.split('\n').map(function(line) {
+      var parts = line.split('|').map(function(p){ return p.trim(); });
+      return { name: parts[0] || '', phone: parts[1] || '', notes: parts[2] || '' };
+    }).filter(function(r) { return r.name && r.phone; });
+  }
+
+  window.sendBroadcastAI = async function() {
+    var brief = document.getElementById('bc-ai-brief').value.trim();
+    var rawRecipients = document.getElementById('bc-ai-recipients').value.trim();
+    var resultEl = document.getElementById('bc-ai-result');
+    var previewEl = document.getElementById('bc-ai-preview');
+    var btn = document.getElementById('btn-broadcast-ai');
+
+    if (!brief) { bcaiToast('Escribí qué querés comunicar', true); return; }
+    var recipients = parseAiRecipients(rawRecipients);
+    if (!recipients.length) { bcaiToast('Cargá al menos un destinatario con nombre y teléfono', true); return; }
+    if (recipients.length > 200) { bcaiToast('Máximo 200 destinatarios por envío', true); return; }
+
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '✦ Generando mensajes personalizados...';
+    previewEl.innerHTML = '';
+    resultEl.style.display = 'none';
+
+    try {
+      var res = await fetch('/api/broadcast', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          message: brief,
+          recipients: recipients,
+          channel: 'whatsapp',
+          ai_generate: true
+        })
+      });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok || data.ok === false) throw new Error(data.error || 'Error al enviar');
+
+      resultEl.style.display = 'block';
+      resultEl.style.background = 'rgba(16,185,129,.1)';
+      resultEl.style.color = '#10B981';
+      resultEl.style.border = '1px solid rgba(16,185,129,.2)';
+      resultEl.textContent = '✓ ' + data.sent + ' mensaje(s) enviado(s)' + (data.failed ? ', ' + data.failed + ' fallaron' : '');
+
+      if (data.results && data.results.length) {
+        previewEl.innerHTML = '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:8px;">Mensajes generados</div>' +
+          data.results.map(function(r) {
+            var statusColor = r.status === 'sent' ? '#10B981' : '#EF4444';
+            return '<div style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:8px;">' +
+              '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+                '<span style="font-weight:600;font-size:12px;">' + r.name + '</span>' +
+                '<span style="font-size:10px;color:' + statusColor + ';font-weight:700;text-transform:uppercase;">' + r.status + '</span>' +
+              '</div>' +
+              '<div style="font-size:12px;color:var(--text2);">' + (r.message || r.error || '') + '</div>' +
+            '</div>';
+          }).join('');
+      }
+
+      bcaiToast('Envío completo ✓');
+      document.getElementById('bc-ai-brief').value = '';
+    } catch (e) {
+      resultEl.style.display = 'block';
+      resultEl.style.background = 'rgba(239,68,68,.1)';
+      resultEl.style.color = '#EF4444';
+      resultEl.style.border = '1px solid rgba(239,68,68,.2)';
+      resultEl.textContent = '✗ ' + e.message;
+      bcaiToast(e.message, true);
+    }
+
+    btn.disabled = false;
+    btn.textContent = origText;
+  };
+})();
+</script>
 </body>
 </html>
