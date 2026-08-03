@@ -2262,12 +2262,17 @@ def setup_page():
     return render_template("setup.html")
 
 
+@app.get("/signup")
+def signup_page():
+    """Always shows the workspace creation wizard, even if other workspaces already exist.
+    Used to onboard additional businesses (multi-tenant) beyond the very first one."""
+    return render_template("setup.html")
+
+
 @app.post("/api/setup")
 def api_setup():
-    """First-run setup: creates the workspace and owner account."""
-    if is_setup_complete():
-        return json_error("Setup already completed", 400)
-
+    """Creates a new workspace and owner account. Works for the first-ever setup
+    AND for onboarding additional businesses afterwards (multi-tenant)."""
     payload = request.get_json(force=True)
     workspace_name = (payload.get("workspace_name") or "").strip()
     owner_name     = (payload.get("owner_name") or "").strip()
@@ -2281,6 +2286,13 @@ def api_setup():
         return json_error("All fields are required")
     if len(password) < 6:
         return json_error("Password must be at least 6 characters")
+
+    with closing(get_db()) as _conn_check:
+        existing_user = _conn_check.execute(
+            "SELECT id FROM users WHERE email = ?", (owner_email,)
+        ).fetchone()
+    if existing_user:
+        return json_error("Ya existe una cuenta con ese email. Usa el login o un email diferente.", 400)
 
     # Derive slug from workspace name
     import re as _re
