@@ -27,7 +27,7 @@ try:
 except Exception:
     stripe = None
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +198,10 @@ APP_URL = os.environ.get("APP_URL", "http://127.0.0.1:5000")
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV", "production") == "production"
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024  # 12MB max upload size
 
 
 # No demo workspaces — first run triggers setup wizard
@@ -216,6 +220,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     plan TEXT NOT NULL DEFAULT 'trial',
     trial_ends_at TEXT,
     plan_expires_at TEXT,
+    whatsapp_number TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -385,6 +390,7 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     currency TEXT NOT NULL,
     state TEXT NOT NULL,
     due_date TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
@@ -403,6 +409,16 @@ CREATE TABLE IF NOT EXISTS traces (
 CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS advisor_insights_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL UNIQUE,
+    insights_json TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
 CREATE TABLE IF NOT EXISTS industry_playbooks (
@@ -893,7 +909,29 @@ def init_db(force_reset: bool = False) -> None:
             )
         except Exception:
             pass
+
+        # Performance indexes for common lookups (safe no-ops if they already exist)
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_workspace ON users(workspace_id)",
+            "CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(workspace_id, customer_phone)",
+            "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_deals_workspace ON deals(workspace_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_products_workspace ON products(workspace_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ledger_workspace ON ledger_entries(workspace_id, entry_type)",
+            "CREATE INDEX IF NOT EXISTS idx_vendor_invoices_workspace ON vendor_invoices(workspace_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_vendor_invoices_vendor ON vendor_invoices(workspace_id, vendor_name)",
+        ]:
+            try:
+                conn.execute(idx_sql)
+            except Exception:
+                pass
+
+        try:
             conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", ("schema_version", APP_VERSION))
+        except Exception:
+            pass
             conn.commit()
             existing = conn.execute("SELECT COUNT(*) AS count FROM workspaces").fetchone()["count"]
             if existing:
@@ -912,6 +950,8 @@ def auto_setup_if_needed():
                 "ALTER TABLE conversations ADD COLUMN customer_phone TEXT",
                 "ALTER TABLE vendor_invoices ADD COLUMN file_base64 TEXT",
                 "ALTER TABLE vendor_invoices ADD COLUMN file_mime_type TEXT DEFAULT 'application/pdf'",
+                "ALTER TABLE workspaces ADD COLUMN whatsapp_number TEXT",
+                "ALTER TABLE ledger_entries ADD COLUMN source TEXT DEFAULT 'manual'",
             ]:
                 try:
                     conn.execute(col_def)
@@ -1448,8 +1488,8 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
                             if is_paid and amount:
                                 ledger_cur = conn.execute(
                                     """INSERT INTO ledger_entries
-                                       (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at)
-                                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                                       (workspace_id, entry_type, concept, category, amount, currency, state, due_date, source, created_at)
+                                       VALUES (?,?,?,?,?,?,?,?,'auto',?)""",
                                     (workspace_id, "Expense",
                                      f"Factura proveedor {extracted.get('vendor_name','')} — {extracted.get('invoice_number','')}",
                                      "Proveedores", amount, extracted.get("currency", "USD"),
@@ -1485,11 +1525,22 @@ def check_vendor_invoice_inbox(workspace_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def send_whatsapp_text(to: str, text: str) -> dict[str, Any]:
-    """Send WhatsApp message via Twilio. Falls back to Meta direct API if Twilio not configured."""
+def send_whatsapp_text(to: str, text: str, workspace_id: int | None = None) -> dict[str, Any]:
+    """Send WhatsApp message via Twilio. Falls back to Meta direct API if Twilio not configured.
+    If workspace_id is given, sends FROM that business's own registered number so each
+    business's customers see messages coming from the number they actually wrote to —
+    critical for multi-tenant, otherwise every business would share one sender identity."""
     twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
     twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
     twilio_from = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+    if workspace_id:
+        try:
+            with closing(get_db()) as _conn_wa:
+                _ws_row = _conn_wa.execute("SELECT whatsapp_number FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+                if _ws_row and _ws_row["whatsapp_number"]:
+                    twilio_from = f"whatsapp:{_ws_row['whatsapp_number']}"
+        except Exception:
+            pass
     if twilio_sid and twilio_token:
         to_fmt = to if to.startswith("whatsapp:") else f"whatsapp:{to}"
         url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json"
@@ -1841,6 +1892,44 @@ def sales_agent_negotiate(
                  discount_pct, round(floor_total, 2), currency, expires_at, now),
             )
             deal_id = cur.lastrowid
+
+            # Auto-create a Pipeline card so the Sales Agent's work shows up on the visual board
+            # without needing anyone to add it manually.
+            try:
+                pipeline_row = conn2.execute(
+                    "SELECT id FROM pipelines WHERE workspace_id=? ORDER BY id LIMIT 1", (workspace_id,)
+                ).fetchone()
+                if not pipeline_row:
+                    pcur = conn2.execute(
+                        "INSERT INTO pipelines (workspace_id,name,stages_json,created_at) VALUES (?,?,?,?)",
+                        (workspace_id, "Pipeline principal",
+                         '["Nuevo","Contactado","Demo","Propuesta","Negociación","Cerrado","Perdido"]', now)
+                    )
+                    pipeline_id = pcur.lastrowid
+                else:
+                    pipeline_id = pipeline_row["id"]
+
+                stage_map = {"offer_sent": "Propuesta", "negotiating": "Negociación", "closed": "Cerrado", "rejected": "Perdido"}
+                card_stage = stage_map.get(decision, "Contactado")
+
+                existing_card = conn2.execute(
+                    "SELECT id FROM pipeline_cards WHERE workspace_id=? AND conversation_id=?",
+                    (workspace_id, conversation_id)
+                ).fetchone()
+                if existing_card:
+                    conn2.execute(
+                        "UPDATE pipeline_cards SET stage=?, deal_value=?, currency=?, updated_at=? WHERE id=?",
+                        (card_stage, round(negotiated_total, 2), currency, now, existing_card["id"])
+                    )
+                else:
+                    conn2.execute(
+                        "INSERT INTO pipeline_cards (workspace_id,pipeline_id,conversation_id,customer_name,deal_value,currency,stage,probability,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (workspace_id, pipeline_id, conversation_id, customer_name,
+                         round(negotiated_total, 2), currency, card_stage, 50, now, now)
+                    )
+            except Exception:
+                pass
+
             _log_agent_event(
                 conn2, workspace_id, "sales_agent", "negotiate",
                 "deal", deal_id,
@@ -1933,8 +2022,8 @@ def accounting_agent_close_deal(
         # 2. Ledger entry (Income / Paid — instantaneous)
         ledger_cur = conn.execute(
             """INSERT INTO ledger_entries
-               (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (workspace_id, entry_type, concept, category, amount, currency, state, due_date, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?)""",
             (workspace_id, "Income",
              f"Invoice {invoice_number} — {deal['customer_name']}",
              "Sales", total, deal["currency"], "Paid", now[:10], now),
@@ -1967,6 +2056,14 @@ def accounting_agent_close_deal(
                     "INSERT INTO stock_movements (workspace_id, product_id, delta, stock_after, movement_type, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (workspace_id, pid, -int(qty_sold), new_stock, "sale", f"Venta automatica - Deal {deal_id}", now),
                 )
+                stock_min_row = conn.execute("SELECT stock_min, name FROM products WHERE id = ?", (pid,)).fetchone()
+                if stock_min_row and new_stock <= (stock_min_row["stock_min"] or 0):
+                    try:
+                        trigger_automations(workspace_id, "low_stock", {
+                            "product_id": pid, "product_name": stock_min_row["name"], "stock": new_stock,
+                        })
+                    except Exception:
+                        pass
         except Exception as stock_err:
             print(f"Stock deduction error for deal {deal_id}: {stock_err}")
 
@@ -1999,6 +2096,32 @@ def accounting_agent_close_deal(
             1.0, False,
         )
         conn.commit()
+
+        # Move the linked Pipeline card to "Cerrado" automatically
+        try:
+            if deal.get("conversation_id"):
+                conn.execute(
+                    "UPDATE pipeline_cards SET stage='Cerrado', updated_at=? WHERE workspace_id=? AND conversation_id=?",
+                    (now, workspace_id, deal["conversation_id"])
+                )
+        except Exception:
+            pass
+
+        # Fire automations for "deal_closed" trigger — passes real customer contact info
+        try:
+            phone_row = None
+            if deal.get("conversation_id"):
+                phone_row = conn.execute(
+                    "SELECT customer_phone FROM conversations WHERE id = ?", (deal["conversation_id"],)
+                ).fetchone()
+            trigger_automations(workspace_id, "deal_closed", {
+                "deal_id": deal_id,
+                "customer_name": deal.get("customer_name", ""),
+                "customer_phone": phone_row["customer_phone"] if phone_row else None,
+                "amount": total,
+            })
+        except Exception:
+            pass
 
     return {
         "invoice_id": invoice_id,
@@ -2248,6 +2371,88 @@ def workspace_dashboard(workspace_id: int) -> dict[str, Any]:
     }
 
 
+# ── Hardening: global error handling, validation helpers, security ─────────
+
+import re as _re_mod
+import logging as _logging_mod
+import time as _time_mod
+from collections import defaultdict as _defaultdict
+
+_logger = _logging_mod.getLogger("banzai")
+_logger.setLevel(_logging_mod.INFO)
+
+
+@app.errorhandler(404)
+def _handle_404(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "Recurso no encontrado"}), 404
+    return e
+
+
+@app.errorhandler(500)
+def _handle_500(e):
+    _logger.error(f"Internal error on {request.path}: {e}")
+    if request.path.startswith("/api/") or request.path.startswith("/webhook/"):
+        return jsonify({"ok": False, "error": "Ocurrió un error interno. Intentá de nuevo en unos segundos."}), 500
+    return jsonify({"ok": False, "error": "internal_error"}), 500
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected_exception(e):
+    """Catch-all: never let an unhandled exception crash a worker or leak a stack trace to the client."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    _logger.error(f"Unhandled exception on {request.path}: {type(e).__name__}: {e}")
+    if request.path.startswith("/webhook/"):
+        return ("", 200)  # webhooks should always ack, never retry-storm the sender
+    return jsonify({"ok": False, "error": "Ocurrió un error inesperado. Intentá de nuevo."}), 500
+
+
+@app.after_request
+def _add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+def is_valid_email(value: str) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    return bool(_re_mod.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value.strip()))
+
+
+def is_positive_number(value, allow_zero: bool = True) -> bool:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return False
+    if allow_zero:
+        return n >= 0
+    return n > 0
+
+
+def sanitize_text(value: str, max_len: int = 500) -> str:
+    if not value or not isinstance(value, str):
+        return ""
+    return value.strip()[:max_len]
+
+
+# ── Simple in-memory rate limiter for sensitive endpoints (login, setup) ───
+_rate_limit_buckets = _defaultdict(list)
+
+def rate_limited(key: str, max_attempts: int = 8, window_seconds: int = 60) -> bool:
+    """Returns True if the caller should be blocked (too many attempts)."""
+    now = _time_mod.time()
+    bucket = _rate_limit_buckets[key]
+    bucket[:] = [t for t in bucket if now - t < window_seconds]
+    if len(bucket) >= max_attempts:
+        return True
+    bucket.append(now)
+    return False
+
+
 @app.route("/")
 def index():
     if not is_setup_complete():
@@ -2284,8 +2489,12 @@ def api_setup():
 
     if not workspace_name or not owner_name or not owner_email or not password:
         return json_error("All fields are required")
+    if not is_valid_email(owner_email):
+        return json_error("El email no tiene un formato valido")
     if len(password) < 6:
         return json_error("Password must be at least 6 characters")
+    if rate_limited(f"setup:{request.remote_addr}", max_attempts=5, window_seconds=300):
+        return json_error("Demasiados intentos de registro. Esperá unos minutos e intentá de nuevo.", 429)
 
     with closing(get_db()) as _conn_check:
         existing_user = _conn_check.execute(
@@ -2359,6 +2568,8 @@ def api_setup():
 
 @app.post("/api/login")
 def api_login():
+    if rate_limited(f"login:{request.remote_addr}", max_attempts=15, window_seconds=300):
+        return json_error("Demasiados intentos de login desde esta conexión. Esperá unos minutos.", 429)
     payload = request.get_json(force=True)
     email = payload.get("email", "").strip().lower()
     password = payload.get("password", "")
@@ -2541,12 +2752,24 @@ def api_products_create():
     required = ["sku", "name", "category", "cost", "price", "stock"]
     if any(payload.get(key) in [None, ""] for key in required):
         return json_error("Missing product fields")
+    if not is_positive_number(payload.get("cost")):
+        return json_error("El costo no puede ser negativo")
+    if not is_positive_number(payload.get("price")):
+        return json_error("El precio no puede ser negativo")
+    try:
+        if int(payload.get("stock")) < 0:
+            return json_error("El stock no puede ser negativo")
+    except (TypeError, ValueError):
+        return json_error("Stock invalido")
     now = datetime.utcnow().isoformat()
+    stock_min_val = int(payload.get("stock_min", 0) or 0)
+    if stock_min_val < 0:
+        return json_error("El stock minimo no puede ser negativo")
     with closing(get_db()) as conn:
         conn.execute(
             """
-            INSERT INTO products (workspace_id, sku, name, category, cost, price, stock, competitor_price, demand_score, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO products (workspace_id, sku, name, category, cost, price, stock, stock_min, unit, barcode, competitor_price, demand_score, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user["workspace_id"],
@@ -2556,6 +2779,9 @@ def api_products_create():
                 float(payload["cost"]),
                 float(payload["price"]),
                 int(payload["stock"]),
+                stock_min_val,
+                sanitize_text(payload.get("unit", "unit"), 20) or "unit",
+                sanitize_text(payload.get("barcode", ""), 60),
                 float(payload.get("competitor_price", 0)),
                 int(payload.get("demand_score", 60)),
                 now,
@@ -2580,14 +2806,23 @@ def api_products_update(product_id: int):
             return json_error("Product not found", 404)
         fields = []
         values = []
-        for field, cast in [("sku", str), ("name", str), ("category", str), ("cost", float), ("price", float), ("stock", int), ("competitor_price", float), ("demand_score", int)]:
+        for field, cast in [("sku", str), ("name", str), ("category", str), ("cost", float), ("price", float),
+                             ("stock", int), ("stock_min", int), ("unit", str), ("barcode", str),
+                             ("notes", str), ("competitor_price", float), ("demand_score", int)]:
             if field in payload and payload[field] != "" and payload[field] is not None:
+                if field in ("cost", "price") and not is_positive_number(payload[field]):
+                    return json_error(f"{field} no puede ser negativo")
+                if field in ("stock", "stock_min") and int(payload[field]) < 0:
+                    return json_error(f"{field} no puede ser negativo")
                 fields.append(f"{field} = ?")
                 values.append(cast(payload[field]))
+        if "active" in payload:
+            fields.append("active = ?")
+            values.append(1 if payload["active"] else 0)
         if not fields:
             return json_error("No fields to update")
         values += [now, product_id, user["workspace_id"]]
-        conn.execute(f"UPDATE products SET {', '.join(fields)}, created_at = ? WHERE id = ? AND workspace_id = ?", values)
+        conn.execute(f"UPDATE products SET {', '.join(fields)}, updated_at = ? WHERE id = ? AND workspace_id = ?", values)
         conn.commit()
         updated = dict(conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone())
     return jsonify({"ok": True, "product": updated})
@@ -2647,44 +2882,67 @@ def api_products_bulk():
     items = payload.get("products", [])
     if not items or not isinstance(items, list):
         return json_error("products array required")
+    if len(items) > 2000:
+        return json_error("Maximo 2000 productos por carga. Dividi el archivo en partes mas chicas.")
     now = datetime.utcnow().isoformat()
-    created = updated = errors = 0
+    created = updated = 0
+    error_details = []
     with closing(get_db()) as conn:
-        for item in items:
+        for idx, item in enumerate(items):
+            row_label = f"Fila {idx+1}"
             try:
                 sku = str(item.get("sku", "")).strip()
                 name = str(item.get("name", "")).strip()
-                if not sku or not name:
-                    errors += 1
-                    continue
+                if not sku:
+                    error_details.append(f"{row_label}: falta SKU"); continue
+                if not name:
+                    error_details.append(f"{row_label} (SKU {sku}): falta nombre"); continue
+                if not is_positive_number(item.get("cost", 0)):
+                    error_details.append(f"{row_label} (SKU {sku}): costo negativo o invalido"); continue
+                if not is_positive_number(item.get("price", 0)):
+                    error_details.append(f"{row_label} (SKU {sku}): precio negativo o invalido"); continue
+                try:
+                    stock_val = int(item.get("stock", 0))
+                    if stock_val < 0:
+                        error_details.append(f"{row_label} (SKU {sku}): stock negativo"); continue
+                except (TypeError, ValueError):
+                    error_details.append(f"{row_label} (SKU {sku}): stock invalido"); continue
+
+                stock_min_val = int(item.get("stock_min", 0) or 0)
+                if stock_min_val < 0:
+                    error_details.append(f"{row_label} (SKU {sku}): stock_min negativo"); continue
+
                 existing = conn.execute(
                     "SELECT id FROM products WHERE workspace_id = ? AND sku = ?",
                     (user["workspace_id"], sku),
                 ).fetchone()
                 if existing:
                     conn.execute(
-                        """UPDATE products SET name=?, category=?, cost=?, price=?, stock=?, competitor_price=?, demand_score=?
+                        """UPDATE products SET name=?, category=?, cost=?, price=?, stock=?, stock_min=?, competitor_price=?, demand_score=?, updated_at=?
                            WHERE id=?""",
-                        (name, item.get("category","General"), float(item.get("cost",0)),
-                         float(item.get("price",0)), int(item.get("stock",0)),
-                         float(item.get("competitor_price",0)), int(item.get("demand_score",60)),
+                        (name, sanitize_text(item.get("category","General"), 100), float(item.get("cost",0)),
+                         float(item.get("price",0)), stock_val, stock_min_val,
+                         float(item.get("competitor_price",0)), int(item.get("demand_score",60)), now,
                          existing["id"]),
                     )
                     updated += 1
                 else:
                     conn.execute(
-                        """INSERT INTO products (workspace_id,sku,name,category,cost,price,stock,competitor_price,demand_score,created_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                        (user["workspace_id"], sku, name, item.get("category","General"),
+                        """INSERT INTO products (workspace_id,sku,name,category,cost,price,stock,stock_min,competitor_price,demand_score,created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (user["workspace_id"], sku, name, sanitize_text(item.get("category","General"), 100),
                          float(item.get("cost",0)), float(item.get("price",0)),
-                         int(item.get("stock",0)), float(item.get("competitor_price",0)),
+                         stock_val, stock_min_val, float(item.get("competitor_price",0)),
                          int(item.get("demand_score",60)), now),
                     )
                     created += 1
-            except Exception:
-                errors += 1
+            except Exception as row_err:
+                error_details.append(f"{row_label}: {str(row_err)[:100]}")
         conn.commit()
-    return jsonify({"ok": True, "created": created, "updated": updated, "errors": errors})
+    return jsonify({
+        "ok": True, "created": created, "updated": updated, "errors": len(error_details),
+        "error_details": error_details[:50],  # cap the detail list so a huge bad file doesn't blow up the response
+    })
 
 
 
@@ -2720,8 +2978,8 @@ def api_quotes():
     now = datetime.utcnow().isoformat()
     with closing(get_db()) as conn:
         conn.execute(
-            "INSERT INTO ledger_entries (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (user["workspace_id"], "Income", f"Quote for {customer}", "Sales", total, user["currency"], "Pending", "2026-05-30", now),
+            "INSERT INTO ledger_entries (workspace_id, entry_type, concept, category, amount, currency, state, due_date, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user["workspace_id"], "Income", f"Quote for {customer}", "Sales", total, user["currency"], "Pending", now[:10], "auto", now),
         )
         conn.execute(
             "INSERT INTO traces (workspace_id, flow, customer, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -2791,25 +3049,93 @@ def api_ledger_create():
     except PermissionError:
         return json_error("Not authenticated", 401)
     payload = request.get_json(force=True)
-    concept = payload.get("concept", "").strip()
+    concept = sanitize_text(payload.get("concept", ""), max_len=300)
     if not concept:
         return json_error("Concept is required")
+    entry_type = payload.get("entry_type", "Expense")
+    if entry_type not in ("Income", "Expense"):
+        return json_error("entry_type debe ser 'Income' o 'Expense'")
+    if not is_positive_number(payload.get("amount", 0), allow_zero=False):
+        return json_error("El monto debe ser mayor a cero")
+    state = payload.get("state", "Pending")
+    if state not in ("Pending", "Paid", "Overdue", "Cancelled"):
+        return json_error("Estado invalido")
     now = datetime.utcnow().isoformat()
     with closing(get_db()) as conn:
         conn.execute(
-            "INSERT INTO ledger_entries (workspace_id, entry_type, concept, category, amount, currency, state, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ledger_entries (workspace_id, entry_type, concept, category, amount, currency, state, due_date, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user["workspace_id"],
-                payload.get("entry_type", "Expense"),
+                entry_type,
                 concept,
-                payload.get("category", "Operations"),
+                sanitize_text(payload.get("category", "Operations"), max_len=100),
                 float(payload.get("amount", 0)),
                 payload.get("currency", user["currency"]),
-                payload.get("state", "Pending"),
-                payload.get("due_date", "2026-05-30"),
+                state,
+                payload.get("due_date") or now[:10],
+                "manual",
                 now,
             ),
         )
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.put("/api/ledger/<int:entry_id>")
+def api_ledger_update(entry_id):
+    """Edit a manually-entered ledger entry. Auto-generated entries (from sales or vendor
+    invoices) can't be edited here — that would corrupt the automatic accounting trail."""
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    payload = request.get_json(force=True)
+    with closing(get_db()) as conn:
+        row = conn.execute(
+            "SELECT source FROM ledger_entries WHERE id=? AND workspace_id=?",
+            (entry_id, user["workspace_id"])
+        ).fetchone()
+        if not row:
+            return json_error("Entry not found", 404)
+        if row["source"] != "manual":
+            return json_error("Este asiento fue generado automaticamente y no se puede editar directamente", 403)
+        fields, values = [], []
+        if "concept" in payload:
+            fields.append("concept = ?"); values.append(sanitize_text(payload["concept"], 300))
+        if "category" in payload:
+            fields.append("category = ?"); values.append(sanitize_text(payload["category"], 100))
+        if "amount" in payload:
+            if not is_positive_number(payload["amount"], allow_zero=False):
+                return json_error("El monto debe ser mayor a cero")
+            fields.append("amount = ?"); values.append(float(payload["amount"]))
+        if "state" in payload and payload["state"] in ("Pending", "Paid", "Overdue", "Cancelled"):
+            fields.append("state = ?"); values.append(payload["state"])
+        if "due_date" in payload:
+            fields.append("due_date = ?"); values.append(payload["due_date"])
+        if not fields:
+            return json_error("Nada para actualizar")
+        values += [entry_id, user["workspace_id"]]
+        conn.execute(f"UPDATE ledger_entries SET {', '.join(fields)} WHERE id=? AND workspace_id=?", values)
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/ledger/<int:entry_id>")
+def api_ledger_delete(entry_id):
+    try:
+        user = require_auth()
+    except PermissionError:
+        return json_error("Not authenticated", 401)
+    with closing(get_db()) as conn:
+        row = conn.execute(
+            "SELECT source FROM ledger_entries WHERE id=? AND workspace_id=?",
+            (entry_id, user["workspace_id"])
+        ).fetchone()
+        if not row:
+            return json_error("Entry not found", 404)
+        if row["source"] != "manual":
+            return json_error("Este asiento fue generado automaticamente y no se puede borrar directamente", 403)
+        conn.execute("DELETE FROM ledger_entries WHERE id=? AND workspace_id=?", (entry_id, user["workspace_id"]))
         conn.commit()
     return jsonify({"ok": True})
 
@@ -3117,10 +3443,24 @@ def api_deals_reject(deal_id: int):
         return json_error("Not authenticated", 401)
     now = datetime.utcnow().isoformat()
     with closing(get_db()) as conn:
+        deal = conn.execute(
+            "SELECT status, conversation_id FROM deals WHERE id = ? AND workspace_id = ?",
+            (deal_id, user["workspace_id"])
+        ).fetchone()
+        if not deal:
+            return json_error("Deal not found", 404)
+        if deal["status"] in ("closed", "rejected"):
+            return json_error(f"Este deal ya esta en estado '{deal['status']}' y no se puede rechazar de nuevo", 409)
         conn.execute(
             "UPDATE deals SET status = 'rejected', closed_at = ? WHERE id = ? AND workspace_id = ?",
             (now, deal_id, user["workspace_id"]),
         )
+        # Keep the visual Pipeline in sync — mirrors the auto-close behavior on accept
+        if deal["conversation_id"]:
+            conn.execute(
+                "UPDATE pipeline_cards SET stage='Perdido', updated_at=? WHERE workspace_id=? AND conversation_id=?",
+                (now, user["workspace_id"], deal["conversation_id"])
+            )
         conn.commit()
     return jsonify({"ok": True, "status": "rejected"})
 
@@ -3868,7 +4208,7 @@ def api_billing_payments_create():
         payment_id = cur.lastrowid
         # Auto-post to ledger
         conn.execute(
-            "INSERT INTO ledger_entries (workspace_id,entry_type,concept,category,amount,currency,state,due_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO ledger_entries (workspace_id,entry_type,concept,category,amount,currency,state,due_date,source,created_at) VALUES (?,?,?,?,?,?,?,?,'auto',?)",
             (user["workspace_id"], "Income",
              f"Pago Banzai — {p['customer_name']} — {inv_num}",
              "Suscripción Banzai", float(p["amount"]), p.get("currency",user["currency"]),
@@ -4050,6 +4390,20 @@ def api_surveys_respond(token):
             (int(nps), response_text, suggested_update, now, update_status, token)
         )
         conn.commit()
+
+        # Fire automations based on NPS: low scores need attention, high scores are referral opportunities
+        try:
+            nps_val = int(nps)
+            trigger_type = "nps_low" if nps_val <= 6 else "nps_high" if nps_val >= 9 else None
+            if trigger_type:
+                trigger_automations(row["workspace_id"], trigger_type, {
+                    "customer_name": row["customer_name"],
+                    "customer_email": row["customer_email"],
+                    "nps_score": nps_val,
+                })
+        except Exception:
+            pass
+
     return jsonify({"ok": True, "message": "¡Gracias por tu respuesta!"})
 
 
@@ -4665,6 +5019,64 @@ def trigger_automations(workspace_id: int, trigger_type: str, data: dict = None)
                             (workspace_id, "automation_notify", trigger_type, "fired",
                              f"Auto '{auto['name']}' fired: {str(data)[:200]}", now)
                         )
+                    elif auto["action_type"] == "send_whatsapp":
+                        phone = (data or {}).get("customer_phone")
+                        msg_template = action_cfg.get("message", "")
+                        customer_name = (data or {}).get("customer_name", "")
+                        msg_text = msg_template.replace("{{name}}", customer_name).replace("{{nombre}}", customer_name)
+                        if phone and msg_text:
+                            try:
+                                send_whatsapp_text(phone, msg_text, workspace_id=workspace_id)
+                                detail = f"WhatsApp enviado a {phone}"
+                            except Exception as wa_err:
+                                result = "error"
+                                detail = f"Error enviando WhatsApp: {wa_err}"
+                        else:
+                            result = "skipped"
+                            detail = "Sin telefono de cliente o mensaje vacio"
+                    elif auto["action_type"] == "move_pipeline":
+                        deal_id = (data or {}).get("deal_id")
+                        new_status = action_cfg.get("status", "negotiating")
+                        if deal_id:
+                            conn.execute("UPDATE deals SET status=? WHERE id=? AND workspace_id=?", (new_status, deal_id, workspace_id))
+                            detail = f"Deal {deal_id} movido a {new_status}"
+                        else:
+                            result = "skipped"
+                            detail = "Sin deal_id en el evento"
+                    elif auto["action_type"] == "send_survey":
+                        customer_name = (data or {}).get("customer_name", "")
+                        customer_email = (data or {}).get("customer_email", "")
+                        if customer_name:
+                            import secrets as _secrets_mod
+                            survey_token = _secrets_mod.token_urlsafe(24)
+                            conn.execute(
+                                "INSERT INTO feedback_surveys (workspace_id,customer_name,customer_email,token,status,sent_at) VALUES (?,?,?,?,?,?)",
+                                (workspace_id, customer_name, customer_email or "", survey_token, "sent", now)
+                            )
+                            detail = f"Encuesta enviada a {customer_name}"
+                        else:
+                            result = "skipped"
+                            detail = "Sin nombre de cliente en el evento"
+                    elif auto["action_type"] == "add_to_contacts":
+                        customer_name = (data or {}).get("customer_name", "")
+                        customer_phone = (data or {}).get("customer_phone", "")
+                        if customer_name:
+                            existing = conn.execute(
+                                "SELECT id FROM contacts WHERE workspace_id=? AND (name=? OR phone=?)",
+                                (workspace_id, customer_name, customer_phone)
+                            ).fetchone()
+                            if not existing:
+                                conn.execute(
+                                    "INSERT INTO contacts (workspace_id,name,phone,created_at) VALUES (?,?,?,?)",
+                                    (workspace_id, customer_name, customer_phone, now)
+                                )
+                                detail = f"Contacto agregado: {customer_name}"
+                            else:
+                                result = "skipped"
+                                detail = "Contacto ya existia"
+                        else:
+                            result = "skipped"
+                            detail = "Sin nombre de cliente en el evento"
                     conn.execute(
                         "UPDATE automations SET run_count=run_count+1, last_run_at=? WHERE id=?",
                         (now, auto["id"])
@@ -4765,6 +5177,36 @@ def api_goals_create():
         conn.commit()
         goal = dict(conn.execute("SELECT * FROM goals WHERE id=?", (cur.lastrowid,)).fetchone())
     return jsonify({"ok": True, "goal": goal})
+
+
+@app.put("/api/goals/<int:goal_id>")
+def api_goals_update(goal_id):
+    """Adjust a goal's target, period, or dates after creation."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    payload = request.get_json(force=True)
+    fields = {}
+    if "name" in payload:
+        fields["name"] = sanitize_text(payload["name"], max_len=200)
+    if "target_value" in payload:
+        if not is_positive_number(payload["target_value"], allow_zero=False):
+            return json_error("El objetivo debe ser mayor a cero")
+        fields["target_value"] = float(payload["target_value"])
+    if "end_date" in payload:
+        fields["end_date"] = payload["end_date"]
+    if "status" in payload and payload["status"] in ("active", "completed", "cancelled"):
+        fields["status"] = payload["status"]
+    if not fields:
+        return json_error("Nada para actualizar")
+    with closing(get_db()) as conn:
+        existing = conn.execute("SELECT id FROM goals WHERE id=? AND workspace_id=?", (goal_id, user["workspace_id"])).fetchone()
+        if not existing:
+            return json_error("Goal not found", 404)
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [goal_id, user["workspace_id"]]
+        conn.execute(f"UPDATE goals SET {set_clause} WHERE id = ? AND workspace_id = ?", values)
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.delete("/api/goals/<int:goal_id>")
@@ -4905,22 +5347,106 @@ def api_contacts_sync():
     return jsonify({"ok": True, "created": created, "updated": updated})
 
 
+@app.put("/api/contacts/<int:contact_id>")
+def api_contact_update(contact_id):
+    """Manually edit a contact's details (name, email, phone, company, role, notes, tags)."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    payload = request.get_json(force=True)
+    if "email" in payload and payload["email"] and not is_valid_email(payload["email"]):
+        return json_error("El email no tiene un formato valido")
+    fields = {}
+    for k in ("name", "email", "phone", "company", "role", "notes", "tags"):
+        if k in payload:
+            fields[k] = sanitize_text(payload[k], max_len=1000) if isinstance(payload[k], str) else payload[k]
+    if not fields:
+        return json_error("Nada para actualizar")
+    with closing(get_db()) as conn:
+        existing = conn.execute("SELECT id FROM contacts WHERE id=? AND workspace_id=?", (contact_id, user["workspace_id"])).fetchone()
+        if not existing:
+            return json_error("Contact not found", 404)
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [contact_id, user["workspace_id"]]
+        conn.execute(f"UPDATE contacts SET {set_clause} WHERE id = ? AND workspace_id = ?", values)
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/contacts/<int:contact_id>")
+def api_contact_delete(contact_id):
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    with closing(get_db()) as conn:
+        conn.execute("DELETE FROM contacts WHERE id=? AND workspace_id=?", (contact_id, user["workspace_id"]))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FEATURE 5: AI BUSINESS ADVISOR — weekly insights
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/advisor/insights")
 def api_advisor_insights():
-    """Generate AI-powered weekly business insights from all data."""
+    """Generate AI-powered business insights with period-over-period comparison,
+    accounts payable awareness, and structured priority-ranked output. Cached per workspace
+    for 6 hours to keep it fast, cheap, and consistent instead of re-querying the model on every visit."""
     try: user = require_auth()
     except PermissionError: return json_error("Not authenticated", 401)
     wid = user["workspace_id"]
     cur_currency = user["currency"]
+    force_refresh = request.args.get("refresh") == "1"
+
+    # ── Check cache first (6 hour freshness window) ──
+    if not force_refresh:
+        with closing(get_db()) as conn:
+            cached = conn.execute(
+                "SELECT * FROM advisor_insights_cache WHERE workspace_id = ?", (wid,)
+            ).fetchone()
+        if cached:
+            try:
+                cached_age = (datetime.utcnow() - datetime.fromisoformat(cached["generated_at"])).total_seconds()
+                if cached_age < 6 * 3600:
+                    cached_insights = json.loads(cached["insights_json"])
+                    return jsonify({
+                        "ok": True,
+                        "insights": cached_insights,
+                        "rule_insights": cached_insights,  # backward compat with older frontend
+                        "insights_text": None,
+                        "context": json.loads(cached["context_json"]),
+                        "source": cached["source"],
+                        "generated_at": cached["generated_at"],
+                        "from_cache": True,
+                    })
+            except Exception:
+                pass
+
+    now_dt = datetime.utcnow()
+    week_ago = (now_dt - timedelta(days=7)).isoformat()
+    two_weeks_ago = (now_dt - timedelta(days=14)).isoformat()
 
     with closing(get_db()) as conn:
-        # Gather all key metrics
         income = conn.execute("SELECT COALESCE(SUM(amount),0) as v FROM ledger_entries WHERE workspace_id=? AND entry_type='Income'", (wid,)).fetchone()["v"]
         expenses = conn.execute("SELECT COALESCE(SUM(amount),0) as v FROM ledger_entries WHERE workspace_id=? AND entry_type='Expense'", (wid,)).fetchone()["v"]
+
+        # Period-over-period comparison: this week vs previous week
+        income_this_week = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) as v FROM ledger_entries WHERE workspace_id=? AND entry_type='Income' AND created_at >= ?",
+            (wid, week_ago)
+        ).fetchone()["v"]
+        income_prior_week = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) as v FROM ledger_entries WHERE workspace_id=? AND entry_type='Income' AND created_at >= ? AND created_at < ?",
+            (wid, two_weeks_ago, week_ago)
+        ).fetchone()["v"]
+        deals_this_week = conn.execute(
+            "SELECT COUNT(*) as n FROM deals WHERE workspace_id=? AND status='closed' AND closed_at >= ?",
+            (wid, week_ago)
+        ).fetchone()["n"]
+        deals_prior_week = conn.execute(
+            "SELECT COUNT(*) as n FROM deals WHERE workspace_id=? AND status='closed' AND closed_at >= ? AND closed_at < ?",
+            (wid, two_weeks_ago, week_ago)
+        ).fetchone()["n"]
+
         deals_closed = conn.execute("SELECT COUNT(*) as n, COALESCE(SUM(negotiated_total),0) as v FROM deals WHERE workspace_id=? AND status='closed'", (wid,)).fetchone()
         deals_open = conn.execute("SELECT COUNT(*) as n FROM deals WHERE workspace_id=? AND status IN ('negotiating','offer_sent')", (wid,)).fetchone()["n"]
         avg_nps = conn.execute("SELECT COALESCE(AVG(nps_score),0) as v FROM feedback_surveys WHERE workspace_id=? AND nps_score IS NOT NULL", (wid,)).fetchone()["v"]
@@ -4931,18 +5457,39 @@ def api_advisor_insights():
         pending_updates = conn.execute("SELECT COUNT(*) as n FROM feedback_surveys WHERE workspace_id=? AND update_status='requested'", (wid,)).fetchone()["n"]
         automations_fired = conn.execute("SELECT COALESCE(SUM(run_count),0) as v FROM automations WHERE workspace_id=?", (wid,)).fetchone()["v"]
 
+        # Accounts payable awareness (ties in the vendor invoices system)
+        payable_pending = conn.execute(
+            "SELECT COUNT(*) as n, COALESCE(SUM(amount),0) as v FROM vendor_invoices WHERE workspace_id=? AND status='pending'",
+            (wid,)
+        ).fetchone()
+        payable_overdue = conn.execute(
+            "SELECT COUNT(*) as n, COALESCE(SUM(amount),0) as v FROM vendor_invoices WHERE workspace_id=? AND status='pending' AND due_date IS NOT NULL AND due_date < ?",
+            (wid, now_dt.strftime("%Y-%m-%d"))
+        ).fetchone()
+
+    income_trend_pct = round(((income_this_week - income_prior_week) / income_prior_week * 100), 1) if income_prior_week > 0 else None
+    deals_trend = deals_this_week - deals_prior_week
+
     context = {
         "income": income, "expenses": expenses, "net": income - expenses,
+        "income_this_week": income_this_week, "income_prior_week": income_prior_week,
+        "income_trend_pct": income_trend_pct,
+        "deals_this_week": deals_this_week, "deals_prior_week": deals_prior_week, "deals_trend": deals_trend,
         "deals_closed": deals_closed["n"], "deals_value": deals_closed["v"],
         "deals_open": deals_open, "avg_nps": round(avg_nps, 1),
         "low_stock_count": low_stock, "top_products": top_products,
         "pending_client_updates": pending_updates,
         "automations_run": automations_fired,
+        "payable_pending_count": payable_pending["n"], "payable_pending_total": payable_pending["v"],
+        "payable_overdue_count": payable_overdue["n"], "payable_overdue_total": payable_overdue["v"],
         "currency": cur_currency,
     }
 
-    # Use OpenAI if available, otherwise generate rule-based insights
+    # ── Structured AI insights (JSON, not raw text) ──
     openai_key = os.environ.get("OPENAI_API_KEY", "")
+    insights = None
+    source = "rule_based"
+
     if openai_key and OpenAI:
         try:
             client_ai = OpenAI(api_key=openai_key)
@@ -4950,45 +5497,105 @@ def api_advisor_insights():
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[{
                     "role": "system",
-                    "content": "Sos el asesor de negocios IA de Banzai. Analizás los datos del negocio y dás 5 insights accionables, concretos y priorizados. Respondé en español. Cada insight tiene: un emoji, título corto, explicación de 1-2 oraciones, y acción recomendada. Sé directo, no genérico."
+                    "content": (
+                        "Sos el asesor de negocios IA de Banzai, experto en PyMEs. Analizás datos reales y devolvés "
+                        "insights priorizados por urgencia real, no genéricos. Prestá atención especial a: pagos "
+                        "vencidos a proveedores (urgencia máxima), tendencias semana contra semana (no solo totales), "
+                        "y oportunidades concretas de ingresos. "
+                        "Respondé SOLO con un array JSON valido de exactamente 5 objetos, sin texto adicional, sin markdown. "
+                        'Cada objeto: {"emoji": string, "title": string corto, "body": string 1-2 oraciones especificas con numeros reales, '
+                        '"action": string con la accion concreta a tomar, "priority": "high"|"medium"|"low"}. '
+                        "Ordená del más urgente al menos urgente."
+                    )
                 }, {
                     "role": "user",
-                    "content": "Datos del negocio: " + json.dumps(context, ensure_ascii=False) + "\n\nGenerá 5 insights accionables para esta semana."
+                    "content": "Datos del negocio: " + json.dumps(context, ensure_ascii=False)
                 }],
-                max_tokens=600, temperature=0.7
+                max_tokens=900, temperature=0.6
             )
-            insights_text = resp.choices[0].message.content
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = "\n".join(raw.split("\n")[1:-1])
+            insights = json.loads(raw)
+            if isinstance(insights, dict):
+                insights = insights.get("insights", [])
             source = "openai"
         except Exception as e:
-            insights_text = None
-            source = f"error:{e}"
-    else:
-        insights_text = None
-        source = "rule_based"
+            insights = None
+            source = "rule_based"
 
-    # Rule-based fallback insights
-    rule_insights = []
-    if income > 0:
-        margin = round((income - expenses) / income * 100, 1)
-        rule_insights.append({"emoji":"📊","title":"Margen neto","body":f"Tu margen es {margin}%. {'Sólido.' if margin > 30 else 'Hay espacio para mejorar reduciendo gastos operativos.'}","action":"Revisá la categoría de gastos más alta en Finanzas."})
-    if deals_open > 0:
-        rule_insights.append({"emoji":"🎯","title":f"{deals_open} deals abiertos","body":f"Tenés {deals_open} negociaciones activas. Si cierras el 50%, agregás {format_money(deals_closed['v']*0.5, cur_currency)} al pipeline.","action":"Activá el Auditor Agent para ver qué deals necesitan seguimiento."})
-    if avg_nps > 0:
-        nps_label = "Promotores" if avg_nps >= 9 else "Pasivos" if avg_nps >= 7 else "Detractores"
-        rule_insights.append({"emoji":"⭐","title":f"NPS promedio: {round(avg_nps,1)}","body":f"Tu base de clientes son mayormente {nps_label}. {'Pediles referidos activamente.' if avg_nps >= 8 else 'Priorizá resolver los problemas que mencionan en las encuestas.'}","action":"Enviá encuestas a clientes que no respondieron en los últimos 30 días."})
-    if low_stock > 0:
-        rule_insights.append({"emoji":"📦","title":f"{low_stock} productos con stock bajo","body":f"Tenés productos que pueden quedarte sin stock. Esto bloquea ventas que el agente ya puede estar cerrando.","action":"Ir a Inventario → filtrar por stock bajo y reponer."})
-    if pending_updates > 0:
-        rule_insights.append({"emoji":"💡","title":f"{pending_updates} actualizaciones de clientes pendientes","body":"Tus clientes sugirieron mejoras que todavía no revisaste. Actuar rápido muestra que los escuchás.","action":"Admin → Encuestas → revisar y activar las sugerencias relevantes."})
-    rule_insights.append({"emoji":"🤖","title":"Automatizaciones activas","body":f"Las automatizaciones corrieron {int(automations_fired)} veces. Cada ejecución es tiempo que no gastaste.","action":"Agregá 1 automatización nueva esta semana — empezá con 'deal cerrado → crear tarea de seguimiento'."})
+    # ── Rule-based fallback (also used if AI output was malformed) ──
+    if not insights or not isinstance(insights, list):
+        insights = []
+        if context["payable_overdue_count"] > 0:
+            insights.append({"emoji":"🚨","title":f"{context['payable_overdue_count']} factura(s) vencida(s) sin pagar",
+                "body": f"Le debés {format_money(context['payable_overdue_total'], cur_currency)} a proveedores en facturas ya vencidas.",
+                "action":"Andá a Facturas Proveedores y priorizá esos pagos antes de que te corten el crédito.", "priority":"high"})
+        if income_trend_pct is not None and income_trend_pct < -15:
+            insights.append({"emoji":"📉","title":"Ingresos en baja esta semana",
+                "body": f"Facturaste {income_trend_pct}% menos que la semana pasada.",
+                "action":"Revisá el pipeline — puede haber deals estancados que el agente no está cerrando.", "priority":"high"})
+        elif income_trend_pct is not None and income_trend_pct > 15:
+            insights.append({"emoji":"📈","title":"Ingresos en alza esta semana",
+                "body": f"Facturaste {income_trend_pct}% más que la semana pasada.",
+                "action":"Aprovechá el momentum — mandá un broadcast a clientes inactivos ahora.", "priority":"medium"})
+        if income > 0:
+            margin = round((income - expenses) / income * 100, 1)
+            insights.append({"emoji":"📊","title":"Margen neto","body":f"Tu margen es {margin}%.",
+                "action":"Revisá la categoría de gastos más alta en Finanzas." if margin < 30 else "Margen sólido, mantenelo así.",
+                "priority": "medium" if margin < 20 else "low"})
+        if deals_open > 0:
+            insights.append({"emoji":"🎯","title":f"{deals_open} deals abiertos",
+                "body": f"Tenés {deals_open} negociaciones activas sin cerrar.",
+                "action":"Revisá Deals y hacé seguimiento manual a los que llevan más de 3 días sin movimiento.", "priority":"medium"})
+        if low_stock > 0:
+            insights.append({"emoji":"📦","title":f"{low_stock} producto(s) con stock bajo",
+                "body":"Podés perder ventas que el agente ya está negociando por falta de stock.",
+                "action":"Inventario → filtrar por stock bajo y reponer.", "priority":"high"})
+        if pending_updates > 0:
+            insights.append({"emoji":"💡","title":f"{pending_updates} sugerencia(s) de clientes sin revisar",
+                "body":"Tus clientes propusieron mejoras que todavía no evaluaste.",
+                "action":"Admin → Encuestas → revisar y activar las relevantes.", "priority":"low"})
+        if avg_nps > 0:
+            nps_label = "Promotores" if avg_nps >= 9 else "Pasivos" if avg_nps >= 7 else "Detractores"
+            insights.append({"emoji":"⭐","title":f"NPS promedio: {round(avg_nps,1)}",
+                "body": f"Tu base de clientes son mayormente {nps_label}.",
+                "action":"Pediles referidos activamente." if avg_nps >= 8 else "Priorizá resolver los problemas mencionados en encuestas.",
+                "priority": "medium" if avg_nps < 7 else "low"})
+        if not insights:
+            insights.append({"emoji":"✅","title":"Todo en orden","body":"No hay alertas urgentes en este momento.",
+                "action":"Seguí cargando datos para insights más precisos.", "priority":"low"})
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        insights.sort(key=lambda x: priority_rank.get(x.get("priority","low"), 2))
+        insights = insights[:5]
+
+    # ── Save to cache ──
+    generated_at = datetime.utcnow().isoformat()
+    with closing(get_db()) as conn:
+        is_pg = "postgres" in os.environ.get("DATABASE_URL", "")
+        if is_pg:
+            conn.execute(
+                "INSERT INTO advisor_insights_cache (workspace_id, insights_json, context_json, source, generated_at) VALUES (%s,%s,%s,%s,%s) "
+                "ON CONFLICT(workspace_id) DO UPDATE SET insights_json=%s, context_json=%s, source=%s, generated_at=%s",
+                (wid, json.dumps(insights), json.dumps(context), source, generated_at,
+                 json.dumps(insights), json.dumps(context), source, generated_at)
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO advisor_insights_cache (workspace_id, insights_json, context_json, source, generated_at) VALUES (?,?,?,?,?)",
+                (wid, json.dumps(insights), json.dumps(context), source, generated_at)
+            )
+        conn.commit()
 
     return jsonify({
         "ok": True,
-        "insights_text": insights_text,
-        "rule_insights": rule_insights,
-        "source": source,
+        "insights": insights,
+        "rule_insights": insights,  # backward compat with older frontend that reads rule_insights
+        "insights_text": None,
         "context": context,
-        "generated_at": datetime.utcnow().isoformat(),
+        "source": source,
+        "generated_at": generated_at,
+        "from_cache": False,
     })
 
 
@@ -5018,7 +5625,7 @@ def api_broadcast():
             personalized = message.replace("{{name}}", name).replace("{{nombre}}", name)
             if channel == "whatsapp" and phone:
                 try:
-                    send_whatsapp_text(phone, personalized)
+                    send_whatsapp_text(phone, personalized, workspace_id=user["workspace_id"])
                     sent += 1
                 except Exception:
                     failed += 1
@@ -5135,6 +5742,40 @@ def api_integrations_status():
     return jsonify({"ok": True, "integrations": integration_status()})
 
 
+@app.get("/api/workspace/whatsapp-number")
+def api_workspace_whatsapp_get():
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    with closing(get_db()) as conn:
+        row = conn.execute("SELECT whatsapp_number FROM workspaces WHERE id=?", (user["workspace_id"],)).fetchone()
+    return jsonify({"ok": True, "whatsapp_number": row["whatsapp_number"] if row else None})
+
+
+@app.put("/api/workspace/whatsapp-number")
+def api_workspace_whatsapp_set():
+    """Assign this business's own WhatsApp number so inbound webhooks route to the right workspace.
+    Required for multi-tenant: each business needs a unique number registered here."""
+    try: user = require_auth()
+    except PermissionError: return json_error("Not authenticated", 401)
+    if not user_can(user, "manage_settings"):
+        return json_error("Permission denied", 403)
+    payload = request.get_json(force=True)
+    number = sanitize_text(payload.get("whatsapp_number", ""), max_len=30)
+    if number and not _re_mod.match(r"^\+?[0-9]{8,15}$", number.replace(" ", "")):
+        return json_error("El numero debe tener formato internacional, ej: +5491122334455")
+    with closing(get_db()) as conn:
+        if number:
+            conflict = conn.execute(
+                "SELECT id FROM workspaces WHERE whatsapp_number=? AND id != ?",
+                (number, user["workspace_id"])
+            ).fetchone()
+            if conflict:
+                return json_error("Ese numero ya esta asignado a otro negocio en Banzai")
+        conn.execute("UPDATE workspaces SET whatsapp_number=? WHERE id=?", (number or None, user["workspace_id"]))
+        conn.commit()
+    return jsonify({"ok": True, "whatsapp_number": number or None})
+
+
 @app.post("/api/ai/reply")
 def api_ai_reply():
     try:
@@ -5170,9 +5811,27 @@ def api_whatsapp_verify():
 def api_whatsapp_inbound():
     payload = request.get_json(silent=True) or {}
     now = datetime.utcnow().isoformat()
+
+    # Route to the correct business by the number Meta says the message was sent to,
+    # same safety logic as the Twilio webhook: never silently default when multiple
+    # businesses exist and none match, to avoid cross-tenant message leaks.
+    display_phone = None
+    try:
+        display_phone = payload.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("metadata", {}).get("display_phone_number")
+    except Exception:
+        pass
+
     with closing(get_db()) as conn:
-        workspace_slug = os.environ.get("DEFAULT_WHATSAPP_WORKSPACE_SLUG", WORKSPACES[0]["slug"])
-        row = conn.execute("SELECT id, language, currency FROM workspaces WHERE slug = ?", (workspace_slug,)).fetchone()
+        row = None
+        if display_phone:
+            row = conn.execute("SELECT id, language, currency FROM workspaces WHERE whatsapp_number = ?", (display_phone,)).fetchone()
+        if not row:
+            all_ws = conn.execute("SELECT id, language, currency FROM workspaces LIMIT 2").fetchall()
+            if len(all_ws) == 1:
+                row = all_ws[0]
+            else:
+                _logger.error(f"Meta WhatsApp webhook: no workspace matches number {display_phone} and multiple workspaces exist — message dropped")
+                return jsonify({"ok": True})
         workspace_id = row["id"] if row else 1
         language = row["language"] if row else "en"
         currency = row["currency"] if row else "USD"
@@ -5227,7 +5886,7 @@ def api_whatsapp_inbound():
                 conn.commit()
                 # Send the reply back via WhatsApp
                 try:
-                    send_whatsapp_text(sender_phone, reply_text)
+                    send_whatsapp_text(sender_phone, reply_text, workspace_id=workspace_id)
                 except Exception as send_exc:
                     with closing(get_db()) as conn2:
                         conn2.execute(
@@ -5249,7 +5908,7 @@ def api_whatsapp_inbound():
 @app.post("/api/whatsapp/send-test")
 def api_whatsapp_send_test():
     try:
-        require_auth()
+        user = require_auth()
     except PermissionError:
         return json_error("Not authenticated", 401)
     payload = request.get_json(force=True)
@@ -5258,7 +5917,7 @@ def api_whatsapp_send_test():
     if not to or not text:
         return json_error("Both 'to' and 'text' are required")
     try:
-        result = send_whatsapp_text(to, text)
+        result = send_whatsapp_text(to, text, workspace_id=user["workspace_id"])
         return jsonify({"ok": True, "result": result})
     except Exception as exc:
         return json_error(f"WhatsApp send failed: {exc}", 400)
@@ -5961,6 +6620,7 @@ def twilio_whatsapp_webhook():
     """Receives inbound WhatsApp messages from Twilio and routes them to the Sales Agent."""
     try:
         from_number = request.form.get("From", "").replace("whatsapp:", "")
+        to_number = request.form.get("To", "").replace("whatsapp:", "")
         body = request.form.get("Body", "").strip()
         profile_name = request.form.get("ProfileName", "Cliente WhatsApp")
 
@@ -5968,7 +6628,25 @@ def twilio_whatsapp_webhook():
             return ("", 200)
 
         with closing(get_db()) as conn:
-            ws_row = conn.execute("SELECT id, region, currency, language FROM workspaces ORDER BY id LIMIT 1").fetchone()
+            # Route to the correct business by the WhatsApp number the customer wrote to.
+            # Critical for multi-tenant: each business has its own number, so messages
+            # must never fall back to "just pick the first workspace ever created".
+            ws_row = None
+            if to_number:
+                ws_row = conn.execute(
+                    "SELECT id, region, currency, language FROM workspaces WHERE whatsapp_number = ?",
+                    (to_number,)
+                ).fetchone()
+            if not ws_row:
+                # Fallback only for single-tenant setups where exactly one workspace exists
+                # and none has a number configured yet — avoids silently misrouting when
+                # multiple businesses are active.
+                all_ws = conn.execute("SELECT id, region, currency, language FROM workspaces LIMIT 2").fetchall()
+                if len(all_ws) == 1:
+                    ws_row = all_ws[0]
+                else:
+                    _logger.error(f"WhatsApp webhook: no workspace matches number {to_number} and multiple workspaces exist — message dropped to avoid misrouting")
+                    return ("", 200)
             if not ws_row:
                 return ("", 200)
             workspace_id = ws_row["id"]
@@ -6320,10 +6998,12 @@ def api_vendor_invoice_update(invoice_id: int):
     if not user_can(user, "see_finances"):
         return json_error("Permission denied", 403)
     payload = request.get_json(force=True)
+    if "amount" in payload and not is_positive_number(payload.get("amount"), allow_zero=False):
+        return json_error("El monto de la factura debe ser mayor a cero")
     fields = {}
     for k in ("vendor_name", "invoice_number", "invoice_date", "due_date", "amount", "currency"):
         if k in payload:
-            fields[k] = payload[k]
+            fields[k] = sanitize_text(payload[k]) if isinstance(payload[k], str) else payload[k]
     if not fields:
         return json_error("Nothing to update")
     set_clause = ", ".join(f"{k} = ?" for k in fields)
